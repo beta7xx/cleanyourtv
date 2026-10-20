@@ -1,0 +1,56 @@
+# Sony BRAVIA KD-49X8500F (2018, BRAVIA_ATV3_4K, MediaTek MT5891), Asia-Pacific firmware (Thailand)
+# Product BRAVIA_ATV3_4K_PA, model string "BRAVIA 4K GB ATV3". Android TV 9 (API 28), 2 GB RAM.
+# Firmware BRAVIA_ATV3_4K_PA-user 9 PTT1.190515.001.S54 672201 release-keys, security patch 2022-01-05
+#
+# Apply:   tools\disable.ps1 -TvHost <tv ip> examples\sony-kd-49x8500f\debloat.txt
+# Undo:    tools\restore.ps1 -TvHost <tv ip> examples\sony-kd-49x8500f\debloat.txt
+# Everything is DISABLED, not uninstalled. Comment out any line you want to keep.
+#
+# Same firmware build as examples/sony-xbr-65x900f (US), identical package set minus com.sony.dtv.promos;
+# that list's notes apply here (ADB: USB debugging alone opens 5555, Sony Settings pages screencap empty).
+# Stock launcher: com.google.android.tvlauncher. Live TV / input app: com.sony.dtv.tvx (keep: plays HDMI
+# and the DVB-T tuner). Keep com.sony.dtv.tvinput.*, braviasync* (CEC), remotepairing, rcpowerkey,
+# uinputservice, imeproxy, sonysystemservice, settingsprovider, timers, all com.mediatek.*, mtktvapi.agent.
+# Already off on this TV before the list (owner): Netflix, Prime Video, Play Movies, Play Games, YouTube Music,
+# smarthomesettings, notifybravia, kenhchonloc, vewd dia, Gboard latin (Sony imeproxy keyboard is in use).
+# Wi-Fi network belongs to android.uid.system, not setupwraith; setupwraith does not claim HOME on Android 9.
+
+# ACR viewing tracker
+tv.samba.ssm                                   # Samba TV fingerprints what's on screen
+
+# Sony and Google content, ads and promos
+com.sony.dtv.sonyselect                        # Sony Select app store/promo tile
+com.sony.dtv.discovery                         # Sony Discover content bar
+com.sony.dtv.bivlinfo                          # BIVL content service list (feeds Discover)
+com.google.android.tvrecommendations           # recommendation rows for the stock launcher
+android.autoinstalls.config.sony.bravia        # Play auto-install of partner apps
+
+# Retail demo
+com.sony.dtv.demomode
+com.sony.dtv.demosupport
+com.sony.dtv.multiscreendemo
+
+# Telemetry, remote support and feedback
+com.sony.dtv.da.service                        # Sony device agent / remote support
+com.qterics.da.product                         # Qterics device agent
+com.sony.dtv.sonybugreportsys
+com.google.android.tv.bugreportsender
+com.google.android.feedback
+com.sony.dtv.b2b.vendorprotocol                # SDDP broadcaster for Control4-style automation
+
+# Preloaded help apps
+com.sony.dtv.customersupport                   # Help tile
+com.sony.dtv.smarthelp
+com.sony.dtv.imanual                           # i-Manual
+
+# Off by choice on this TV (owner uses Plex/Jellyfin, no USB media, no DLNA). Comment out any you want.
+com.sony.huey.dlna.module                      # DLNA renderer
+com.sony.huey.dlna.renderersettings
+com.sonyericsson.dlna
+com.google.android.inputmethod.japanese        # Japanese keyboard
+com.sony.dtv.smartmediaapp                     # Media Player (USB)
+com.sony.dtv.osat.music                        # Music (USB)
+
+# Kept on purpose (owner uses them): Google Assistant (com.google.android.katniss), Chromecast
+# (com.google.android.apps.mediashell), Screen mirroring (screnmirroring.com, com.sony.dtv.networkapp.wifidirect),
+# Android TV Remote (com.google.android.tv.remote.service), firmware updates (com.sony.dtv.systemupdate).

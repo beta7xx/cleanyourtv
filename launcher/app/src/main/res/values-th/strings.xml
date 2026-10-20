@@ -54,4 +54,6 @@
     <plurals name="library_app_count">
         <item quantity="other">%1$d แอป</item>
     </plurals>
+    <string name="plex_recently_added">เพิ่งเพิ่ม: %1$s</string>
+    <string name="plex_continue">ดูต่อ</string>
 </resources>

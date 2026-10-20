@@ -86,4 +86,6 @@
         <item quantity="one">%1$d app</item>
         <item quantity="other">%1$d apps</item>
     </plurals>
+    <string name="plex_recently_added">Recently added: %1$s</string>
+    <string name="plex_continue">Continue watching</string>
 </resources>

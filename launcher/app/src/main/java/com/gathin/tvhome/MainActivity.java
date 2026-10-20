@@ -102,6 +102,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private GlassView glass;
     private View ambient;
     private TextView heroName;
+    private PlexBackdrop plex;   // null unless config.xml plex_url is set
+    private PlexContinue plexRow;
     private int ambientColor = -1;
     private ValueAnimator ambientAnimator;
     private boolean heroShown;
@@ -258,11 +260,24 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         root = findViewById(R.id.root);
         root.setBackgroundColor(cfg.backgroundColor);
         if (cfg.wallpaper != null) showWallpaper(cfg.wallpaper);
+        // Token lives on the TV only: `settings put global plex_token <token>`, never in the repo.
+        String plexUrl = getString(R.string.plex_url);
+        String plexToken = Settings.Global.getString(getContentResolver(), "plex_token");
+        if (!plexUrl.isEmpty() && plexToken != null && !plexToken.isEmpty()) {
+            float density = getResources().getDisplayMetrics().density;
+            // Plex backdrop only. The "Continue Watching" row was removed: Plex's watch/video deep link
+            // flashes its own "item not known" error often enough that the row was not worth keeping; the
+            // dock's Plex tile opens the app, where Continue Watching already lives. plexRow stays null and
+            // every plexRow reference is null-guarded, so nothing of the row is built or shown.
+            plex = new PlexBackdrop(this, root, plexUrl, plexToken, getString(R.string.plex_sections), density);
+        }
         sky = findViewById(R.id.sky);
         sky.setIntensity(cfg.skyIntensity);
         glass = findViewById(R.id.glass);
         if (festive) glass.setAccent(festival.accentColor());
         ambient = findViewById(R.id.ambient);
+        // config.xml ambient_glow false: no colour wash behind the dock (a photo backdrop does not want one).
+        if (!getResources().getBoolean(R.bool.ambient_glow)) ambient.setVisibility(View.GONE);
         // The glow is one bitmap, so its alpha can be applied while drawing it. Otherwise every frame of
         // a fade renders it into a full-screen offscreen buffer first.
         ambient.forceHasOverlappingRendering(false);
@@ -444,7 +459,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return true;
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 // Back to the dock tile Up came from, not wherever the focus finder lands.
-                focusTile(lastFocused % COLUMNS);
+                if (plexRow == null || !plexRow.focus()) focusTile(lastFocused % COLUMNS);
                 return true;
             }
             int firstButton = btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : R.id.btnWifi;
@@ -578,6 +593,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         updateWifiLabel();
         updateInputsButton();
         if (showStats) startStats();
+        if (plex != null) plex.start();
+        if (plexRow != null) plexRow.start();
         sky.update();
         handler.postDelayed(minuteTick, MINUTE_MS);
         if (festive && diya != null) {
@@ -613,6 +630,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             heroShown = false;
             heroName.setAlpha(0f);
             ambient.setAlpha(0f);
+            if (plex != null) plex.setCaptionShown(false);
+            if (plexRow != null) plexRow.setShown(true);   // focus restores to the dock
         }
         reloadTiles();
         if (animate && animations && !reducedMotion) grid.scheduleLayoutAnimation();
@@ -676,6 +695,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ambient.animate().cancel();
         handler.removeCallbacks(minuteTick);
         stopStats();
+        if (plex != null) plex.stop();
+        if (plexRow != null) plexRow.stop();
         if (diya != null) diya.stop();
         cancelPendingFocusScroll();
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
@@ -1001,6 +1022,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         String label = adapter.labelAt(position);
         int color = adapter.ambientColorAt(position);
         float y = dockTopInRoot - 14 * density - 26 * density - heroName.getHeight();
+        if (plex != null) plex.alignBottom(y + heroName.getHeight());
+        if (plexRow != null) plexRow.setShown(true);
         boolean changed = !label.contentEquals(heroName.getText());
 
         if (!animations || reducedMotion) {
@@ -1120,6 +1143,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ambient.animate().cancel();
         heroName.setAlpha(0f);
         heroShown = false;
+        if (plex != null) plex.setCaptionShown(false);
+        if (plexRow != null) plexRow.setShown(false);
         if (!animations || reducedMotion) {
             setAmbient(color);
             ambient.setAlpha(1f);
@@ -1142,6 +1167,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroName.animate().cancel();
         ambient.animate().cancel();
         heroShown = false;
+        if (plex != null) plex.setCaptionShown(false);
+        if (plexRow != null) plexRow.setShown(false);
         if (animations) {
             heroName.animate().alpha(0f).setDuration(reducedMotion ? 100 : 160).start();
             ambient.animate().alpha(0f).setDuration(reducedMotion ? 140 : 300).start();
@@ -1351,7 +1378,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     rtlAppGrid, keyCode == KeyEvent.KEYCODE_DPAD_LEFT);
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-            if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
+            if (position < COLUMNS) {                      // dock row: the Continue Watching row, else the top bar
+                return plexRow != null && plexRow.focus();
+            }
             target = position - COLUMNS;
         } else {
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
