@@ -39,8 +39,9 @@ public class TileFitTest {
 
     @Test
     public void oneRowUnderATitledDockFits() {
+        // At the 150x84dp design size one row under a titled dock fits without shrinking (180x101 had to).
         int w = AppAdapter.tileWidthPx(INNER, GRID_H, 4, 1, true, true, D);
-        assertTrue(w < AppAdapter.tileWidthPx(INNER, 4, D));
+        assertEquals(AppAdapter.tileWidthPx(INNER, 4, D), w);
         assertTrue(height(w, 1, true) <= GRID_H + 2);
     }
 
@@ -66,7 +67,15 @@ public class TileFitTest {
 
     @Test
     public void droppingTheTitleGivesBiggerTiles() {
-        assertTrue(AppAdapter.tileWidthPx(INNER, GRID_H, 4, 1, false, true, D)
-                > AppAdapter.tileWidthPx(INNER, GRID_H, 4, 1, true, true, D));
+        // Two rows: with the title the tiles sit at the floor, without it they fit the height at a bigger size.
+        assertTrue(AppAdapter.tileWidthPx(INNER, GRID_H, 4, 2, false, true, D)
+                > AppAdapter.tileWidthPx(INNER, GRID_H, 4, 2, true, true, D));
+    }
+
+    /** The design tile is 150x84dp (down from 180x101): a wide 4-column grid caps at it. */
+    @Test
+    public void designTileIs150by84() {
+        assertEquals(Math.round(150 * D), AppAdapter.tileWidthPx(Math.round(2000 * D), 4, D));
+        assertEquals(Math.round(84 * D), AppAdapter.tileHeightPx(Math.round(150 * D)));
     }
 }
