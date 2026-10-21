@@ -353,11 +353,14 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
     private RecyclerView grid;
 
+    /** A dock slot: the first dockSize positions, except the footer row, which sits there when the grid is empty. */
+    private boolean isDockPosition(int pos) { return pos >= 0 && pos < dockSize && !isLibraryAt(pos); }
+
     @Override public void onAttachedToRecyclerView(@NonNull RecyclerView recyclerView) { grid = recyclerView; }
 
     @Override public void onViewAttachedToWindow(@NonNull RecyclerView.ViewHolder holder) {
         int pos = holder.getBindingAdapterPosition();
-        if (pos >= 0 && pos < dockSize) holder.itemView.setTranslationX(dockShift());
+        if (isDockPosition(pos)) holder.itemView.setTranslationX(dockShift());
     }
 
     /**
@@ -379,7 +382,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         for (int i = 0; i < grid.getChildCount(); i++) {
             View child = grid.getChildAt(i);
             int pos = grid.getChildAdapterPosition(child);
-            if (pos >= 0 && pos < dockSize) child.setTranslationX(shift);
+            if (isDockPosition(pos)) child.setTranslationX(shift);
         }
     }
 
@@ -446,7 +449,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         if (isLibraryAt(position)) return;
         Holder h = (Holder) holder;
         Entry e = items.get(position);
-        h.itemView.setTranslationX(position < dockSize ? dockShift() : 0f);   // may be 0 before the grid has a width
+        h.itemView.setTranslationX(isDockPosition(position) ? dockShift() : 0f);   // may be 0 before the grid has a width
         if (e.kind == Entry.EMPTY) {
             // A free dock slot keeps its place in the row and the band, but shows nothing and takes no focus.
             h.card.setVisibility(View.INVISIBLE);
