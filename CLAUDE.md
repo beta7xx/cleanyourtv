@@ -1,0 +1,101 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this repo is
+
+Debloat Android TVs over ADB (no root, nothing uninstalled, every step reversible) and replace the stock
+home with a small native launcher. Three parts: `PROMPT.md` (what end users paste into an assistant),
+`examples/<brand>-<model>/debloat.txt` lists with `tools/` scripts that apply and undo them, and the
+launcher in `launcher/`. Branch `local` is this fork's working branch; `upstream` is Gathin23/cleanyourtv.
+Branch `local` also carries the Plex Continue Watching row, which upstream does not have.
+
+## Commands
+
+Launcher (needs JDK 17, Android SDK platform 34, build-tools 34.0.0; run from `launcher/`):
+
+```bash
+./gradlew testDebugUnitTest --offline -q                 # all JVM unit tests (plain JUnit 4, no device)
+./gradlew testDebugUnitTest --offline -q --tests '*PlexContinueTest*'   # one test class
+./gradlew assembleDebug --offline -q                     # debug APK
+./gradlew testReleaseUnitTest lintRelease assembleRelease  # what CI runs
+```
+
+Release is R8-minified and signed with the debug key, so it installs over a debug build. CI fails a
+release APK over the size gate in `.github/workflows/ci.yml` (460 KB on this fork, 440 KB upstream); the
+launcher targets 1 GB TVs and sits within a few KB of the gate, so check the size after any addition:
+`stat -c %s app/build/outputs/apk/release/app-release.apk`.
+
+Repo lists, tools and docs (from the repo root, Python 3.12, `tools/requirements.txt` in `tools/venv`):
+
+```bash
+python3 -m unittest discover -s tests -v                 # examples/ tables, tool scripts, docs consistency
+python3 -m unittest tests.test_examples -v               # one module
+CLEANYOURTV_STRICT=1 python3 -m unittest discover -s tests  # also checks README counts (CI does this on push to main)
+```
+
+On the TV (set `TV_HOST=<ip>`; `tools/tv.py` is an adb-shell client in Python, no adb binary needed):
+
+```bash
+tools/tv.py --probe                                      # model, Android version, firmware
+tools/tv.py 'input keyevent KEYCODE_DPAD_DOWN'           # inject a remote key
+tools/tv.py --screenshot shots/after.png                 # capture on the TV and pull it
+TV_HOST=<ip> launcher/build-and-install.sh               # build, push, install, set as Home
+tools/theme.sh themes/aurora | tools/theme.sh --reset    # push a theme overlay / back to config.xml
+tools/disable.sh examples/<model>/debloat.txt            # apply a list; tools/restore.sh undoes it
+tools/check.py examples/<model>/debloat.txt              # what a firmware update re-enabled
+```
+
+In Git Bash on Windows, device paths given to adb need `MSYS_NO_PATHCONV=1` or they get rewritten.
+Verify launcher UI changes on the real TV with a screenshot; the emulator is not enough and CONTRIBUTING
+asks for a screenshot in launcher PRs.
+
+## Launcher architecture
+
+All Java under `launcher/app/src/main/java/com/gathin/tvhome/`, no Kotlin, no Compose, no network
+except the optional Plex row. The constraints that shape every decision: 1 GB of RAM, deterministic
+D-pad navigation, nothing TV-specific in code.
+
+- **Configuration layering.** `res/values/config.xml` holds every per-TV choice (dock apps, columns,
+  Live TV package, key services, Plex URL). `Config.load()` overlays `config.json` from the app's
+  external files dir (pushed by `tools/theme.sh`, see `themes/README.md` for the keys); unknown or
+  mistyped keys are ignored so a theme can never break Home. On-TV choices from Launcher settings sit
+  above both until "Follow theme". `ThemeProvider` is a ContentProvider that lets the adb shell write
+  theme files on firmware that locks Android/data.
+- **MainActivity** (large, ~2900 lines) owns the home screen: one RecyclerView `grid` whose first
+  `COLUMNS` positions are the dock (drawn as a band by `DockDecoration`), the rest the app grid, and an
+  optional footer row (`row_app_library.xml`: app library pill and reorder pill). Above the grid in the
+  root FrameLayout sit the backdrop layers (sky, wallpaper, heroArt, ambient glow), the top shelf
+  (`hero`: the focused dock app's name), and the single floating `GlassView` focus highlight that
+  springs between tiles. The dock is "parked" by setting the grid's top padding so it sits near the
+  bottom; moving Down scrolls the grid. Up/Down/Left/Right are handled explicitly in
+  `onTileVerticalKey` and the pill key listeners, not left to Android's focus finder.
+- **AppAdapter** builds the item list: configured dock apps first, then module cards, then the grid
+  alphabetically, with `fill_dock` filling free dock slots from the grid or `DockSlots` inserting
+  EMPTY entries. Tile geometry is derived from `DESIGN_W_DP/H_DP` and the column count
+  (`tileWidthPx`); `TileFitTest` pins it. When the dock has fewer apps than slots the dock row is
+  translated to centre it (`dockShift`), and the band and glass add that translation.
+- **Plex (this fork).** `PlexBackdrop` shows the server's Recently Added art as a dimmed slideshow.
+  `PlexContinue` is the Continue Watching row: it owns the data (hub fetch, SAX parsing into `Item`,
+  opening via Plex's own `plex://watch/video?uri=server://...` link with one resend, ending this TV's
+  server sessions on Home via the stopped timeline report) and the poster row view in two sizes.
+  MainActivity decides when it shows: only while the Plex dock tile has focus, replacing the hero name;
+  Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). Server URL is in
+  config.xml, the token in `Settings.Global plex_token` on the TV, never in the repo. The device needs
+  Plex's Picture-in-Picture app-op denied so Home pauses playback (noted in the KD-49X8500F example).
+- **Services.** `InputKeyService` and `HomeKeyService` are accessibility services that remap remote
+  buttons the stock launcher used to answer; `ClockDream` is the screensaver; `Cards` implements the
+  module-card contract in `docs/specs/card.md` (apps declaring their own tile, approved per signing key).
+
+Design values for the home screen (tile sizes, gaps, type scale, Plex row geometry) are recorded in
+`.interface-design/system.md`; keep changes consistent with it or update it.
+
+## Conventions worth knowing
+
+- Debloat lists disable only (`pm disable-user --user 0`), never uninstall; keep headers with the exact
+  model, Android version and firmware; add a row to `examples/README.md` and the README model table
+  (tests check both tables agree with the folders).
+- Unit tests are plain JVM: the Plex parsers use JDK SAX rather than XmlPullParser for that reason.
+  Anything touching Android views is verified on the TV, not unit-tested.
+- Comments in the launcher explain the why and the TV that motivated a quirk (often with an issue
+  number); keep that style.
