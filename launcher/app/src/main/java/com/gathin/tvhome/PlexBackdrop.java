@@ -68,7 +68,8 @@ final class PlexBackdrop {
         wall = new ImageView(ctx);
         wall.setScaleType(ImageView.ScaleType.CENTER_CROP);
         wall.setAlpha(0f);
-        root.addView(wall, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Above the wallpaper (WallpaperPlayer puts its image and shade at 0 and 1) and the sky, below the hero art.
+        root.addView(wall, root.indexOfChild(root.findViewById(R.id.heroArt)), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         caption = new TextView(ctx);
         caption.setTextColor(0xB3FFFFFF);
         caption.setTextSize(18);
