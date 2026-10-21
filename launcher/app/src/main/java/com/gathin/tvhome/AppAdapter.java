@@ -351,6 +351,38 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         return width <= 0 || height <= 0 || width >= height * 1.4f;
     }
 
+    private RecyclerView grid;
+
+    @Override public void onAttachedToRecyclerView(@NonNull RecyclerView recyclerView) { grid = recyclerView; }
+
+    @Override public void onViewAttachedToWindow(@NonNull RecyclerView.ViewHolder holder) {
+        int pos = holder.getBindingAdapterPosition();
+        if (pos >= 0 && pos < dockSize) holder.itemView.setTranslationX(dockShift());
+    }
+
+    /**
+     * Fewer dock apps than slots (fill_dock off, or nothing left in the grid): the dock sits centred in its row
+     * instead of leaving the free slots at the end. Half the free slots' width in px; the band (DockDecoration)
+     * and the glass (MainActivity.onTileFocused) add this translation to the tiles' layout positions.
+     */
+    float dockShift() {
+        int free = dockSize - Math.min(dockSize, docked);
+        if (free <= 0 || reordering || grid == null) return 0f;
+        int inner = grid.getWidth() - grid.getPaddingLeft() - grid.getPaddingRight();
+        return inner <= 0 ? 0f : free * (inner / (float) dockSize) / 2f;
+    }
+
+    /** Re-applies the centring to the dock tiles on screen: after the grid's width or padding changed. */
+    void shiftDock() {
+        if (grid == null) return;
+        float shift = dockShift();
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            View child = grid.getChildAt(i);
+            int pos = grid.getChildAdapterPosition(child);
+            if (pos >= 0 && pos < dockSize) child.setTranslationX(shift);
+        }
+    }
+
     /** Lets go of every tile and its artwork (Home is in the background and memory is short). */
     void clear() {
         items.clear();
@@ -414,6 +446,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         if (isLibraryAt(position)) return;
         Holder h = (Holder) holder;
         Entry e = items.get(position);
+        h.itemView.setTranslationX(position < dockSize ? dockShift() : 0f);   // may be 0 before the grid has a width
         if (e.kind == Entry.EMPTY) {
             // A free dock slot keeps its place in the row and the band, but shows nothing and takes no focus.
             h.card.setVisibility(View.INVISIBLE);

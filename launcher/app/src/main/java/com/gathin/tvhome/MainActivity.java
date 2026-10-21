@@ -508,7 +508,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             int shelfClearance = cfg.appLibrary ? hero.getMeasuredHeight() + (int) (40 * density) : 0;
             // With the title shelf the dock tiles show no name underneath, so the item's name room (the 7dp gap and
             // the 22dp label) is empty: let the dock sit that much lower, 24dp of band above the screen's edge.
-            int dockNameRoom = MainActivity.this.dockRow && cfg.dockTitle ? Math.round(29 * density) : 0;
+            int dockNameRoom = MainActivity.this.dockRow && cfg.dockTitle ? Math.round(44 * density) : 0;   // 24dp of band above the edge
             int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (AppAdapter.BOTTOM_ROOM_DP * density) + dockNameRoom);
             // Where the rows cannot fit even at the smallest tile (3 rows with the title on), the title keeps its
             // room above the dock and the last rows run off the bottom instead of the title drawing over the clock.
@@ -520,7 +520,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
             // Cold start or column count > 4: the first focus can run before the grid has its final width or
             // padding, leaving the glass at the XML design size until a key is pressed.
-            grid.post(this::refitGlass);
+            grid.post(() -> { adapter.shiftDock(); refitGlass(); });
         });
 
         // Keep the glass glued to its tile while the grid scrolls.
@@ -1238,6 +1238,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         Rect r = tileRect;
         r.set(0, 0, card.getWidth(), card.getHeight());
         root.offsetDescendantRectToMyCoords(card, r);
+        r.offset(Math.round(((View) card.getParent()).getTranslationX()), 0);   // a centred dock's shift (not in layout coords)
         float pad = 6f * density;        // matches GlassView's glow inset
         float scale = adapter.focusScale();
         float w = card.getWidth() * scale + 2 * pad;
@@ -1745,14 +1746,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     private void hideHero() {
+        // The Plex tile shows the row instead of the name, so heroShown is already false there: hide the row first.
+        if (plex != null) plex.setCaptionShown(false);
+        if (plexRow != null) plexRow.setShown(false);
         if (!heroShown) return;
         stopAmbientAnimation();
         hero.animate().cancel();
         ambient.animate().cancel();
         heroArt.animate().cancel();
         heroShown = false;
-        if (plex != null) plex.setCaptionShown(false);
-        if (plexRow != null) plexRow.setShown(false);
         if (animations) {
             hero.animate().alpha(0f).setDuration(reducedMotion ? 100 : 160).start();
             if (ambientGlow) ambient.animate().alpha(0f).setDuration(reducedMotion ? 140 : 300).start();
