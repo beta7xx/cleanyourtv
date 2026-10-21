@@ -56,7 +56,7 @@ final class PlexContinue {
     /** Poster cache: about 34 posters at 244x364 RGB_565; older ones are refetched when scrolled back to. */
     static final int POSTER_CACHE_BYTES = 6 * 1024 * 1024;
     static final long RESEND_MS = 20_000;
-    static final long REFRESH_MS = 20_000;
+    static final long REFRESH_MS = 10_000;
     private static final int TW = 244, TH = 364;   // 2x the large 122x182dp poster; the compact row scales it down
 
     interface Host {
@@ -228,7 +228,7 @@ final class PlexContinue {
         main.removeCallbacks(refresh);
     }
 
-    /** One small XML request every REFRESH_MS while Home is on screen keeps the row in step with Plex. */
+    /** One small XML request every REFRESH_MS (10 s) while Home is on screen keeps the row in step with Plex. */
     private void refresh() {
         if (!running) return;
         new Thread(this::loadRow, "plex-refresh").start();
