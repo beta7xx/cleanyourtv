@@ -52,22 +52,43 @@ Plex's own Watch Next writer (classes.dex, `tv.plex.rntvlaunchercontent`) builds
 `plex://watch/video?uri=server://<machineIdentifier>/com.plexapp.plugins.library/library/metadata/<ratingKey>`,
 so that link is the supported route. Measured behaviour of the bare link:
 
-- Plex already running: plays within about 10 s, no error, including while another video plays.
+- Plex already running: plays within about 10 s, no error, including while another video is open, and
+  resumes at the server's `viewOffset` (the 37-minute mark was honoured).
 - Plex cold: Plex has not yet chosen the local connection and shows its "Remote Watch Pass" paywall
-  instead; the same link sent again about 20 s later plays.
-- After the Home key Plex keeps playing in its foreground `PlayerService` (view offset advances); a
-  media PAUSE key stops it.
+  instead; the same link sent again about 20 s later plays. 8 s after a cold launch is too early.
 
 Therefore `open(item)`:
 
 1. Send the link once (`ACTION_VIEW`, package `com.plexapp.android`).
 2. 20 s later, if `/status/sessions` has no session for that `ratingKey` from one of this TV's addresses,
-   send the same link once more. Nothing else: no `plex://home`, no settle polling, no audio-focus games.
+   send the same link once more. This timer is the one network request allowed while Home is paused; a
+   Home resume cancels it (the user came back; the next OK finds Plex warm and plays at once).
+3. Nothing else: no `plex://home`, no settle polling, no audio focus, no media keys (Plex registers no
+   MediaSession and runs no Companion server, so media keys reach nothing).
 
-On every Home resume the row refreshes from `/hubs/continueWatching` (fallback `/library/onDeck`) as before;
-if that refresh finds a session from this TV in state `playing`, the launcher dispatches
-`KEYCODE_MEDIA_PAUSE` through `AudioManager.dispatchMediaKeyEvent` so Plex's background player pauses.
-No pause is sent otherwise, so other apps' music is left alone.
+## Stopping on Home (tested)
+
+Plex's activity declares `supportsPictureInPicture` and the TV advertises `android.software.picture_in_picture`,
+so on Home Plex believes it is going into PiP and keeps its `PlayerService` playing, although no PiP window
+exists on this set. With the Picture-in-Picture app-op denied
+(`adb shell appops set com.plexapp.android PICTURE_IN_PICTURE ignore`, also reachable as Settings > Apps >
+Plex > Picture-in-picture), Plex's own BackgroundBehaviour pauses playback on Home and reports `paused`
+with the exact offset. This is a one-time device setting, recorded in the KD-49X8500F example notes; the
+launcher cannot set it itself.
+
+The launcher then cuts the server session: on every Home resume the row's refresh fetches
+`/status/sessions`; for each session whose Player address is one of this TV's addresses it sends the
+timeline report `/:/timeline?...&state=stopped&time=<viewOffset>` with that session's client identifier
+(the existing `endSession` request). The server drops the session and keeps `viewOffset` as the resume
+point, which is what the link resumes at. Audio-focus tricks are dropped: Plex re-takes focus and resumes
+as soon as the taker lets go, so they only ever paused it transiently.
+
+## Poster and backdrop bitmaps
+
+Posters (every item the hub returns, 244x364 RGB_565, in a 6 MB LruCache) live for the activity's lifetime,
+like today's `PlexContinue.thumbs`, so gliding over the Plex tile never shows grey placeholders. The item
+list is refetched on every Home resume, not on every focus. The large-row backdrop is one 960x540 RGB_565
+bitmap fetched through the same transcoder path as `PlexBackdrop` and dropped when state 3 ends.
 
 ## Smaller tiles
 
@@ -95,8 +116,8 @@ targeting `btnLibrary`. Reorder mode itself is unchanged (`toggleReorder`).
 
 ## Constraints
 
-- 1 GB-class TVs: posters 10 at most, decoded RGB_565 at 2x the compact size (176x264) and reused for the
-  large row by scaling; one backdrop bitmap at a time (960x540 RGB_565) shared with `PlexBackdrop`'s loader.
+- 1 GB-class TVs: see the bitmap section; nothing is fetched while Home is in the background except the
+  single 20 s resend check.
 - Release APK must stay under the CI gate (450,560 bytes; 432 KB today). The old `PlexContinue` (563
   lines) is rewritten, not extended: its session-stop, audio-focus and home-settle code goes.
 - Strings: Thai (`values-th`) and English for the header and for the meta line's separators.

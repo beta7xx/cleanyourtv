@@ -44,7 +44,7 @@ import javax.xml.parsers.SAXParserFactory;
 /**
  * Plex "Continue Watching" (config.xml plex_url, token in Settings.Global plex_token), styled after the Plex
  * app's own row: series posters, the focused item's details and art. Fetched on every Home resume (one small
- * XML request), posters through Plex's transcoder, at most {@link #COUNT} of them cached.
+ * XML request), every item the hub returns, posters through Plex's transcoder in a memory-bounded cache.
  *
  * Opening an item sends the same link Plex's own Watch Next entries use, once; a cold Plex has not picked
  * the local connection yet and shows its Remote Watch Pass screen instead, so the link is sent a second time
@@ -53,7 +53,8 @@ import javax.xml.parsers.SAXParserFactory;
  * session with the stopped timeline report Plex itself sends when Back leaves the player.
  */
 final class PlexContinue {
-    static final int COUNT = 10;
+    /** Poster cache: about 34 posters at 244x364 RGB_565; older ones are refetched when scrolled back to. */
+    static final int POSTER_CACHE_BYTES = 6 * 1024 * 1024;
     static final long RESEND_MS = 20_000;
     static final long REFRESH_MS = 20_000;
     private static final int TW = 244, TH = 364;   // 2x the large 122x182dp poster; the compact row scales it down
@@ -96,7 +97,9 @@ final class PlexContinue {
     private final String base, token;
     private final float density;
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final LruCache<String, Bitmap> thumbs = new LruCache<>(COUNT);
+    private final LruCache<String, Bitmap> thumbs = new LruCache<String, Bitmap>(POSTER_CACHE_BYTES) {
+        @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
+    };
     private final LinearLayout row;
     private final RecyclerView list;
     private final Adapter adapter = new Adapter();
@@ -437,7 +440,7 @@ final class PlexContinue {
 
     private List<Item> get(String path) {
         try {
-            HttpURLConnection c = open(base + path + "?X-Plex-Container-Start=0&X-Plex-Container-Size=" + COUNT + "&X-Plex-Token=" + token);
+            HttpURLConnection c = open(base + path + "?X-Plex-Token=" + token);   // the whole hub, as Plex shows it
             try (InputStream in = c.getInputStream()) { return parse(in); } finally { c.disconnect(); }
         } catch (Exception e) {
             return new ArrayList<>();
@@ -490,7 +493,7 @@ final class PlexContinue {
                     if (cast.size() < 3 && a.getValue("tag") != null) cast.add(a.getValue("tag"));
                     return;
                 }
-                if (!"Video".equals(tag) || out.size() >= COUNT) return;
+                if (!"Video".equals(tag)) return;
                 key = a.getValue("key"); title = a.getValue("title");
                 poster = a.getValue("grandparentThumb") != null ? a.getValue("grandparentThumb") : a.getValue("thumb");
                 if (key == null || title == null || poster == null) { key = null; return; }

@@ -80,4 +80,11 @@ public class PlexContinueTest {
         assertFalse(PlexContinue.same(a, c));
         assertFalse(PlexContinue.same(a, Collections.emptyList()));
     }
+
+    @Test
+    public void keepsEveryItemTheHubReturns() throws Exception {
+        StringBuilder xml = new StringBuilder();
+        for (int i = 0; i < 25; i++) xml.append("<Video key=\"/library/metadata/").append(i).append("\" title=\"T").append(i).append("\" thumb=\"/t").append(i).append("\"/>");
+        assertEquals(25, parse(xml.toString()).size());
+    }
 }
