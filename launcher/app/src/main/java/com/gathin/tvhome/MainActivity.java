@@ -1365,11 +1365,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (!plexRow.hasItems()) { leavePlexLarge(); focusTile(plexDockPosition()); }
             return;
         }
-        if (adapter.appCount() == 0) return;
-        int pos = Math.max(0, Math.min(lastFocused, adapter.appCount() - 1));
-        RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
-        View card = vh == null ? null : vh.itemView.findViewById(R.id.card);
-        if (card != null && card.isFocused() && isPlexDock(pos)) onTileFocused(pos, card);
+        refocusGlass();   // runs the dock tile's focus again, which places or hides the row
     }
 
     /** Compact row, bottom 26dp above the dock tiles: 18dp of air over the band, the hero name's own clearance. */
