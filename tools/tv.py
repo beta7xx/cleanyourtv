@@ -4,6 +4,7 @@
 Set TV_HOST to the TV's IP. Usage:
     tv.py --probe                      connect and print model / Android version
     tv.py <shell command...>           run one shell command
+    tv.py --screenshot <local.png>     capture the screen on the TV, then pull it
     tv.py --batch < commands.txt       one command per line, same connection
     tv.py --push <local> <remote>      small files only (see b64push.py for larger ones)
     tv.py --pull <remote> <local>
@@ -38,10 +39,26 @@ if not os.path.exists(KEY) and os.path.exists(ADB_KEY) and os.path.exists(ADB_KE
     KEY = ADB_KEY
 
 
+def restrict(path):
+    """Keep a private key to this account. Reported, never fatal: the key still works either way.
+    Windows has no POSIX mode bits and ignores this."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError as e:
+        print(f"warning: could not restrict permissions on {path}: {e}", file=sys.stderr)
+
+
 def get_signer():
-    os.makedirs(KEYDIR, exist_ok=True)
+    # This key is an ADB credential: anyone who can read it gets a shell on every TV that has
+    # accepted it, with no "Allow USB debugging?" prompt. adb_shell's keygen writes it with a plain
+    # open(), so it lands at 0666 & ~umask, which is 0644 under the usual umask: readable by every
+    # other account on the machine. Google's own adb keeps ~/.android/adbkey at 0600, so match that,
+    # on every run, so a key written by an earlier version of this script is repaired too.
+    os.makedirs(KEYDIR, mode=0o700, exist_ok=True)
     if not os.path.exists(KEY):
         keygen(KEY)
+    if KEY != ADB_KEY:   # the stock key belongs to the user's own adb; don't touch its permissions
+        restrict(KEY)
     with open(KEY) as f:
         priv = f.read()
     with open(KEY + ".pub") as f:
@@ -55,13 +72,66 @@ def connect(timeout=120):
     return dev
 
 
+USAGE = """usage:
+    tv.py --probe
+    tv.py --screenshot <local.png>
+    tv.py --push <local> <remote>
+    tv.py --pull <remote> <local>
+    tv.py --batch < commands.txt
+    tv.py <shell command...>
+"""
+# Arguments each known flag takes, the flag included. The shell branch takes anything, so a flag
+# with the wrong count listed here is a typo, not a command for the TV.
+ARITY = {"--probe": 1, "--screenshot": 2, "--push": 3, "--pull": 3, "--batch": 1}
+
+# screencap writes the PNG on the TV and we pull the file afterwards: adb_shell's shell() decodes
+# what comes back as text, which corrupts an image, and `exec-out screencap -p` returns a broken
+# PNG on some MediaTek sets (docs/TROUBLESHOOTING.md). /data/local/tmp is writable from shell.
+SHOT_REMOTE = "/data/local/tmp/cleanyourtv-shot.png"
+
+
+def check_arity(args):
+    """Reject a known flag with the wrong argument count before connecting.
+
+    Without this, `--screenshot` with a destination missing falls through to the shell branch and
+    the TV tries to run `--screenshot` as a command."""
+    if args and args[0] in ARITY and len(args) != ARITY[args[0]]:
+        sys.stderr.write(USAGE)
+        sys.exit(2)
+
+
+def screenshot(dev, local):
+    """Capture the TV screen into `local`. Returns 0, or 1 when the capture came back empty."""
+    # Agents pass paths like shots/01-home.png before that folder exists, and the pull then fails
+    # after the capture has already run on the TV (#364). Create it first.
+    os.makedirs(os.path.dirname(os.path.abspath(local)), exist_ok=True)
+    dev.shell(f"screencap -p {SHOT_REMOTE}", read_timeout_s=120.0)
+    dev.pull(SHOT_REMOTE, local, transport_timeout_s=300.0, read_timeout_s=300.0)
+    dev.shell(f"rm -f {SHOT_REMOTE}", read_timeout_s=60.0)   # leave nothing behind on the TV
+    size = os.path.getsize(local) if os.path.exists(local) else 0
+    if size == 0:
+        # 0 bytes means the input, not the connection: Live TV and HDMI captures come back empty on
+        # most sets, and PROMPT.md tells the agent to look at the screen rather than the ADB link.
+        print(f"captured 0 bytes into {local}: Live TV and HDMI inputs come back empty on most TVs, "
+              "so check the input before the ADB connection (see docs/TROUBLESHOOTING.md)",
+              file=sys.stderr)
+        return 1
+    print(f"screenshot {local} ({size} bytes)")
+    return 0
+
+
 def main():
     args = sys.argv[1:]
+    check_arity(args)
     dev = connect()
+    status = 0
     if not args or args == ["--probe"]:
         for p in ("ro.product.model", "ro.product.device", "ro.build.version.release",
-                  "ro.build.version.sdk", "ro.build.display.id", "ro.product.manufacturer"):
+                  "ro.build.version.sdk", "ro.build.display.id", "ro.product.manufacturer",
+                  "ro.adb.secure", "service.adb.tcp.port"):
             print(f"{p} = {dev.shell(f'getprop {p}').strip()}")
+    elif args[0] == "--screenshot":
+        status = screenshot(dev, args[1])
     elif args[0] == "--push" and len(args) == 3:
         dev.push(args[1], args[2], transport_timeout_s=300.0, read_timeout_s=300.0)
         print(f"pushed {args[1]} -> {args[2]}")
@@ -85,7 +155,8 @@ def main():
         out = dev.shell(" ".join(args), read_timeout_s=120.0)
         sys.stdout.write(out)
     dev.close()
+    return status
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

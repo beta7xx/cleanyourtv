@@ -25,6 +25,9 @@ Connect
   macOS Local Network privacy blocking adb. Don't debug it: use the Python `adb-shell` package in a venv
   as the ADB client instead. If its file push hangs on larger files, transfer files as base64 chunks
   through the shell and verify the md5.
+- If your own commands can't reach the TV at all while it answers from an ordinary terminal (a sandbox that
+  blocks the local network), ask me to run `tools/relay.py <tv ip>` in a terminal and leave it running, then
+  use `TV_HOST=127.0.0.1 TV_PORT=15555` (`tools/relay.md`).
 - If port 5555 stays closed, the TV may only offer Wireless debugging (Google TV sets often do): look for
   `_adb-tls-connect._tcp` with `dns-sd -B` or `adb mdns services`, ask me for the code and port under
   Developer options > Wireless debugging > Pair device with pairing code, then `adb pair`, `adb connect`
@@ -40,8 +43,10 @@ Back up first
   is on, so warn me, and remind me to switch debugging off once you're done.
 - When you finish, close network ADB instead of leaving it open: switch USB debugging and
   Network/ADB debugging off on the TV, revoke the USB debugging authorisations, reboot, and check
-  that `nc -vz <tv ip> 5555` fails. Port 5555 is plaintext, and on firmware with `ro.adb.secure=0`
-  any device on the LAN can get a shell.
+  with `tools/adb-closed.py <tv ip>` that the port refuses the connection. Don't trust `nc` on macOS:
+  Local Network privacy can block it too, and its "No route to host" proves nothing; only "Connection
+  refused" does. Port 5555 is plaintext, and on firmware with `ro.adb.secure=0` any device on the LAN
+  can get a shell.
 
 Debloat
 - List installed packages and sort them into: manufacturer telemetry/analytics, manufacturer content
@@ -56,8 +61,23 @@ Debloat
 - Before touching streaming apps, voice assistant, Chromecast, Miracast or the update service, ask me
   which ones I use with a checklist question and disable only what I don't tick.
 - Run `pm` commands one per shell call, chained commands may silently stop after the first.
+- If `pm disable-user` is refused for every package, stop and tell me: some firmware (Fire OS 5 on a
+  Fire TV Box, for one) refuses `pm disable-user` with a `SecurityException`, `pm uninstall --user 0`
+  with `DELETE_FAILED_INTERNAL_ERROR`, and `pm hide` reports success while changing nothing. Check
+  with `pm list packages -d` instead of the exit code, and don't burn the session retrying - there is
+  nothing to debloat on such a set, so we fall back to its own privacy toggles and DNS blocking
+  (`docs/TROUBLESHOOTING.md`).
+- Don't launch a package whose name says factory, production, AT or fac menu (`com.cvte.tv.hkcfac`,
+  `com.at.factory.*`, `mediatek.factorymenu.ui` and the like) to see what it does, even read-only:
+  on Haier/CVTE boards opening one flips a factory-mode flag that kills the Input key and CEC, and
+  makes the next boot disable Play services, Netflix and Chromecast - which the shell then cannot
+  re-enable. `dumpsys package <name>` tells you what a package is without starting it, and
+  `docs/TROUBLESHOOTING.md` has the way out if one has been opened.
 - Disable in small batches and screenshot between them: a batch can take something load-bearing with
   it and you cannot tell which.
+- After the last batch, reboot once and compare `pm list packages -d` with what you disabled: some
+  firmware re-enables packages at every boot from its own list (TCL Android 9 does this for its user
+  center). Note those in the list header instead of disabling them again after each boot.
 - Offer me ad-blocking DNS as an optional extra: on Android 9 and newer, Private DNS set to an
   ad-blocking resolver (`settings put global private_dns_specifier dns.adguard-dns.com`, then
   `settings put global private_dns_mode hostname`). Tell me it doesn't block YouTube ads, check an app
@@ -70,17 +90,33 @@ Launcher
   declares `android.intent.category.HOME` unless it carries the manufacturer's signature. If you
   hit either, do the debloat half, say plainly that the launcher half is impossible here, and stop
   retrying installs. The matching `examples/` header says which case your TV is.
+- Check the TV's SDK level before promising the launcher, too: `tools/tv.py 'getprop
+  ro.build.version.sdk'` against `grep minSdk launcher/app/build.gradle` (26 = Android 8.0). A set
+  below it answers `INSTALL_FAILED_OLDER_SDK`; lowering `minSdk` is a source change you would then
+  maintain yourself, and an APK rebuilt elsewhere is nothing this repo can verify. On those sets offer
+  the debloat half and say the launcher cannot be installed.
 - Don't install a third-party launcher that charges for basics like wallpapers. Build a small native
   Android TV launcher instead (Java, AndroidX RecyclerView, minSdk matching the TV, debug build is fine),
   install it over ADB, set it as the default home and disable the stock launcher. If several apps claim
   the HOME intent, list them with `cmd package query-activities -a android.intent.action.MAIN -c
-  android.intent.category.HOME` and set the default with `cmd package set-home-activity`.
+  android.intent.category.HOME` and set the default with `cmd package set-home-activity`. Those two
+  commands can both name your launcher while Home still opens something else: on some Google TV builds
+  `set-home-activity` prints `Success` and changes nothing, and setupwraith's `.RecoveryActivity`
+  keeps the key. Confirm with `dumpsys activity activities | grep mFocusedApp` before telling me the
+  takeover worked.
 - Before disabling the stock launcher, check which other apps claim HOME: on Google TV the setup wizard
   (`com.google.android.tungsten.setupwraith`) takes over even after the stock launcher is disabled, and
   the matching `examples/` header says what to do. Before disabling setupwraith, run
   `dumpsys wifi | grep -o 'cname=[^ ]*'`: a Wi-Fi network saved during first setup belongs to it, and
   Android deletes that network the moment it is disabled, which takes the TV off Wi-Fi and ADB. If it
   does, ask me to forget the network and re-join it in Settings first.
+- On Google TV the stock launcher also answers the remote's app buttons (Netflix, YouTube and the like),
+  Input and Settings/dashboard buttons, so after disabling it ask me to press each one, and remap any that
+  do nothing with the launcher's key services: `input_key_keycodes` and `app_keys` with
+  INPUT_KEY_SERVICE=1, `settings_key_keycodes` with HOME_KEY_SERVICE=1 (`config.xml` or the theme).
+  A button the TV logs as `KEY_UNKNOWN` or `KEY_PROGRAM` cannot be matched by keycode, since every
+  unmapped button shares it: read the scancode with `getevent -lt` and use `settings_key_scancodes`,
+  which only `config.xml` carries (a theme can set keycodes, not scancodes).
 - On Android 11 and newer the launcher must declare `<queries>` for `android.intent.category.LEANBACK_LAUNCHER`,
   or package visibility silently hides every app and the grid comes up empty; target a recent SDK, some
   Google TV 14 sets refuse older targets at install.
@@ -98,10 +134,18 @@ Launcher
 - Keep it light: the TV has about 1 GB of RAM. No blur, no video, no network polling.
 
 Verify
-- After each change, inject remote key presses over ADB, take a screenshot from the TV and look at it.
+- After each change, inject remote key presses over ADB, take a screenshot from the TV and look at it:
+  `tools/tv.py --screenshot shots/01-after.png` captures on the TV and pulls the PNG.
   Fix what you see before moving on.
-- Live TV and HDMI screenshots come back empty (0 bytes); that is the TV, not a broken debloat. Check
+- Live TV and HDMI screenshots come back empty (0 bytes); that is the TV, not a broken debloat, and
+  `--screenshot` exits 1 with that message. Check
   `dumpsys activity activities | grep topResumedActivity` instead (see `docs/TROUBLESHOOTING.md`).
+- If the screen looks enlarged and clipped after an install or a reboot, check the display overrides
+  before editing the launcher grid: `wm size` and `wm density` show a physical value next to an
+  override, and an override left over from an old resolution experiment, or a density that comes back
+  wrong on some MediaTek Sony firmware, is not a launcher bug. An empty
+  `settings get secure display_density_forced` is a normal default, not damage - read all three
+  values first and put them back if you undo (`docs/TROUBLESHOOTING.md`).
 - If a remote button relies on an accessibility helper, check that the service is enabled and bound
   for the current user, then ask me to press the real button; an injected key is not proof (see
   `docs/TROUBLESHOOTING.md`).
