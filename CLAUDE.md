@@ -90,6 +90,18 @@ D-pad navigation, nothing TV-specific in code.
 Design values for the home screen (tile sizes, gaps, type scale, Plex row geometry) are recorded in
 `.interface-design/system.md`; keep changes consistent with it or update it.
 
+## Syncing this fork with upstream
+
+```bash
+git fetch upstream main && git branch -f main upstream/main && git push origin main   # fork's main mirrors upstream
+git checkout local && git merge main                                                # bring upstream into local
+```
+
+Expect conflicts in `MainActivity.java`, `config.xml` and the two `strings.xml` files, where the Plex row
+lives; keep both sides and keep this fork's `reorder_button`/`ambient_glow` values. GitHub's web merge
+cannot resolve these, so merge locally and push `local`. The fork's design and plan documents are in
+`docs/superpowers/specs/` and `docs/superpowers/plans/`; `shots/` holds TV screenshots and is not committed.
+
 ## Conventions worth knowing
 
 - Debloat lists disable only (`pm disable-user --user 0`), never uninstall; keep headers with the exact
