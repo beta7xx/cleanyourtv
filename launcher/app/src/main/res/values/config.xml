@@ -106,6 +106,8 @@
     <!-- Plex "Recently Added" backdrops behind the home screen (PlexBackdrop.java): server URL without a
          trailing slash; empty = off. The X-Plex-Token is stored on the TV, not here:
          adb shell settings put global plex_token <token>   (Plex Web > any item > Get Info > View XML). -->
+    <!-- For the Continue Watching row, deny Plex's Picture-in-Picture app-op once so Home pauses it: see
+         examples/sony-kd-49x8500f/debloat.txt. -->
     <string name="plex_url" translatable="false"></string>
     <!-- Library names (as shown in Plex) whose Recently Added feeds are merged, newest first, one item per
          title. Empty = the server-wide Recently Added. -->
