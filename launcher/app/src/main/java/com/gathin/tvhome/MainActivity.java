@@ -126,8 +126,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private View plexScrim, plexDetails;
     private TextView plexTitle, plexEpisode, plexMeta, plexSummary, plexCast;
     private final PlexContinue.Host plexHost = new PlexContinue.Host() {
-        @Override public void onRowFocused() { enterPlexLarge(); }
-        @Override public void onItemFocused(PlexContinue.Item item) { showPlexDetails(item); }
+        @Override public void onItemFocused(PlexContinue.Item item) { enterPlexLarge(); showPlexDetails(item); }
         @Override public void onItemsChanged() { refreshPlexRow(); }
         @Override public void onRowUp() { leavePlexLarge(); plexRow.setShown(false); firstTopButton().requestFocus(); }
         @Override public void onRowDown() { leavePlexLarge(); focusTile(plexDockPosition()); }
@@ -490,7 +489,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 // Posted: a RecyclerView ignores requestLayout while it is laying out, and this runs from its layout.
                 grid.post(() -> {
                     grid.setPadding(side, grid.getPaddingTop(), side, grid.getPaddingBottom());
-                    grid.post(this::refocusGlass);   // the tiles moved under the highlight
+                    grid.post(() -> refitGlass(true));   // the tiles moved under the highlight
                 });
             }
             int inner = (r - l) - grid.getPaddingLeft() - grid.getPaddingRight();
@@ -1299,27 +1298,24 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
-    /** The focused tile moved (the grid's side padding changed): run its focus again so the glass follows. */
-    private void refocusGlass() {
-        if (isDestroyed() || adapter.appCount() == 0) return;
-        int pos = Math.max(0, Math.min(lastFocused, adapter.appCount() - 1));
-        RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
-        View card = vh == null ? null : vh.itemView.findViewById(R.id.card);
-        if (card != null && card.isFocused()) onTileFocused(pos, card);
-    }
-
     /** Refits the glass to the focused holder once the grid layout and tile dimensions settle. */
-    private void refitGlass() {
-        if (isDestroyed() || adapter.appCount() == 0 || libraryFocusPending) return;
+    private void refitGlass() { refitGlass(false); }
+
+    /**
+     * Runs the focused tile's focus again: always when forced (the tiles moved under the glass, or the Plex
+     * row's items changed), otherwise only when the glass no longer fits the tile.
+     */
+    private void refitGlass(boolean force) {
+        if (isDestroyed() || adapter.appCount() == 0 || (!force && libraryFocusPending)) return;
         int pos = Math.max(0, Math.min(lastFocused, adapter.appCount() - 1));
         RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
         View card = vh == null ? null : vh.itemView.findViewById(R.id.card);
-        if (card == null || card.getWidth() <= 0 || !card.isFocused()) return;
+        if (card == null || !card.isFocused() || (!force && card.getWidth() <= 0)) return;
         float pad = 6f * density;
         float scale = adapter.focusScale();
         int w = (int) (card.getWidth() * scale + 2 * pad);
         int h = (int) (card.getHeight() * scale + 2 * pad);
-        if (!glassShown || card.getWidth() != glassCardW || glass.getWidth() != w || glass.getHeight() != h) {
+        if (force || !glassShown || card.getWidth() != glassCardW || glass.getWidth() != w || glass.getHeight() != h) {
             onTileFocused(pos, card);
         }
     }
@@ -1365,7 +1361,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (!plexRow.hasItems()) { leavePlexLarge(); focusTile(plexDockPosition()); }
             return;
         }
-        refocusGlass();   // runs the dock tile's focus again, which places or hides the row
+        refitGlass(true);   // runs the dock tile's focus again, which places or hides the row
     }
 
     /**

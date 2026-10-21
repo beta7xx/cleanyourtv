@@ -60,8 +60,7 @@ final class PlexContinue {
     private static final int TW = 244, TH = 364;   // 2x the large 122x182dp poster; the compact row scales it down
 
     interface Host {
-        void onRowFocused();
-        /** A poster took focus: show its art and details. */
+        /** A poster took focus: the row grows and its art and details show. */
         void onItemFocused(Item item);
         /** The list was (re)loaded: the host re-places or hides the row for the tile that has focus. */
         void onItemsChanged();
@@ -420,7 +419,6 @@ final class PlexContinue {
                 if (focused) {
                     int pos = h.getBindingAdapterPosition();
                     if (pos >= 0) lastFocused = pos;
-                    host.onRowFocused();
                     if (pos >= 0 && pos < items.size()) host.onItemFocused(items.get(pos));
                 }
             });
