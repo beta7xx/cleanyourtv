@@ -56,13 +56,20 @@ final class PlexContinue {
     static final int COUNT = 10;
     static final long RESEND_MS = 20_000;
     static final long REFRESH_MS = 20_000;
-    private static final int TW = 176, TH = 264;   // 2x the compact 88x132dp poster
+    private static final int TW = 244, TH = 364;   // 2x the large 122x182dp poster; the compact row scales it down
 
     interface Host {
         void onRowFocused();
+        /** A poster took focus: show its art and details. */
+        void onItemFocused(Item item);
+        /** The list was (re)loaded: the host re-places or hides the row for the tile that has focus. */
+        void onItemsChanged();
         void onRowUp();
         void onRowDown();
     }
+
+    /** Poster sizes in dp: compact above the dock, and the Plex app's own 122x182 when the row has focus. */
+    static final int SMALL_W = 88, SMALL_H = 132, LARGE_W = 122, LARGE_H = 182, GAP = 14, EDGE = 63;
 
     static final class Item {
         final String key, show, title, poster, art, summary, cast, meta;
@@ -100,6 +107,7 @@ final class PlexContinue {
     private boolean shown = true;
     private final Runnable refresh = this::refresh;
     private Runnable resend;
+    private boolean large;
 
     PlexContinue(Context ctx, Host host, String base, String token, float density) {
         this.ctx = ctx;
@@ -110,22 +118,48 @@ final class PlexContinue {
         row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setVisibility(View.GONE);
+        row.setClipChildren(false);
+        row.setClipToPadding(false);
         TextView title = new TextView(ctx);
         title.setText(R.string.plex_continue);
-        title.setTextColor(0xCCFFFFFF);
+        title.setTextColor(Color.WHITE);
         title.setTextSize(18);
-        title.setTypeface(ctx.getResources().getFont(R.font.outfit));
-        title.setPadding(dp(12), 0, 0, dp(4));
+        title.setTypeface(ctx.getResources().getFont(R.font.outfit_medium));
+        title.setPadding(dp(EDGE), 0, 0, dp(GAP));
         row.addView(title);
         list = new RecyclerView(ctx);
         list.setLayoutManager(new LinearLayoutManager(ctx, RecyclerView.HORIZONTAL, false));
+        adapter.setHasStableIds(true);   // a refresh keeps the focused poster focused
         list.setAdapter(adapter);
         list.setClipToPadding(false);
         list.setClipChildren(false);
-        list.setPadding(dp(12), dp(6), dp(12), dp(6));
+        // 6dp above and below: room for the focus scale and stroke.
+        list.setPadding(dp(EDGE), dp(6), dp(EDGE), dp(6));
         list.setOverScrollMode(View.OVER_SCROLL_NEVER);
         row.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
+
+    boolean hasItems() { return !items.isEmpty(); }
+
+    /** The row's height for the current size: header, the list's 6dp above and below, the poster. */
+    int height() {
+        View title = row.getChildAt(0);
+        if (title.getMeasuredHeight() == 0)
+            title.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        return title.getMeasuredHeight() + dp(12) + posterH();
+    }
+
+    /** Compact (above the dock) or the Plex app's size (row focused). Applies to every poster at once. */
+    void setLarge(boolean large) {
+        if (this.large == large) return;
+        this.large = large;
+        // Rebind rather than resize the attached children only: posters parked in the view cache keep their
+        // size otherwise and come back wrong. Stable ids keep the focused poster focused through it.
+        adapter.notifyItemRangeChanged(0, items.size());
+    }
+
+    private int posterW() { return dp(large ? LARGE_W : SMALL_W); }
+    private int posterH() { return dp(large ? LARGE_H : SMALL_H); }
 
     View view() { return row; }
 
@@ -146,7 +180,7 @@ final class PlexContinue {
 
     /** Focus the row's last item; false when the row is empty or hidden, so the caller falls back to the usual target. */
     boolean focus() {
-        if (items.isEmpty() || !shown) return false;
+        if (items.isEmpty()) return false;
         int pos = Math.min(lastFocused, items.size() - 1);
         RecyclerView.ViewHolder vh = list.findViewHolderForAdapterPosition(pos);
         if (vh != null) { vh.itemView.requestFocus(); return true; }
@@ -191,11 +225,20 @@ final class PlexContinue {
         if (fresh.isEmpty()) fresh = get("/library/onDeck");
         final List<Item> result = fresh;
         main.post(() -> {
-            if (!running) return;
+            if (!running || same(items, result)) return;
             items = result;
             adapter.notifyDataSetChanged();
             row.setVisibility(items.isEmpty() ? View.GONE : shown ? View.VISIBLE : View.INVISIBLE);
+            host.onItemsChanged();
         });
+    }
+
+    /** Same items in the same order with the same progress: nothing to rebind (a rebind unsettles focus). */
+    static boolean same(List<Item> a, List<Item> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++)
+            if (!a.get(i).key.equals(b.get(i).key) || a.get(i).progress != b.get(i).progress) return false;
+        return true;
     }
 
     // ---- opening ---------------------------------------------------------------------------------
@@ -274,68 +317,80 @@ final class PlexContinue {
 
     private final class Holder extends RecyclerView.ViewHolder {
         final ImageView image;
-        final TextView show, label;
-        final View bar;
+        final View bar, track;
         final GradientDrawable frame = new GradientDrawable();
-        Holder(LinearLayout v, ImageView image, TextView show, TextView label, View bar) {
-            super(v);
-            this.image = image; this.show = show; this.label = label; this.bar = bar;
+        int progress;
+        Holder(FrameLayout card, ImageView image, View bar, View track) {
+            super(card);
+            this.image = image; this.bar = bar; this.track = track;
         }
     }
 
     private final class Adapter extends RecyclerView.Adapter<Holder> {
         @Override public int getItemCount() { return items.size(); }
+        @Override public long getItemId(int position) { return items.get(position).key.hashCode(); }
+
+        /** The poster's size for the current mode, and the progress bar's width inside it. */
+        void size(View card) {
+            ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) card.getLayoutParams();
+            lp.width = posterW();
+            lp.height = posterH();
+            lp.setMarginEnd(dp(GAP));
+            card.setLayoutParams(lp);
+            RecyclerView.ViewHolder vh = list.getChildViewHolder(card);
+            if (vh instanceof Holder) {
+                Holder h = (Holder) vh;
+                h.bar.getLayoutParams().width = (posterW() - 2 * dp(8)) * h.progress / 100;
+                h.bar.requestLayout();
+            }
+        }
 
         @Override public Holder onCreateViewHolder(ViewGroup parent, int type) {
-            LinearLayout v = new LinearLayout(ctx);
-            v.setOrientation(LinearLayout.VERTICAL);
-            v.setFocusable(true);
-            v.setLayoutParams(new RecyclerView.LayoutParams(dp(100), ViewGroup.LayoutParams.WRAP_CONTENT));
-            v.setPadding(dp(6), dp(6), dp(6), dp(6));
             FrameLayout card = new FrameLayout(ctx);
+            card.setFocusable(true);
+            RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(posterW(), posterH());
+            lp.setMarginEnd(dp(GAP));
+            card.setLayoutParams(lp);
             ImageView image = new ImageView(ctx);
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setBackgroundColor(0xFF1E1E1E);
             card.addView(image, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            // Plex's progress bar: amber over a dark track, 2dp high, inset 8dp from the poster's sides and bottom.
             View track = new View(ctx);
             track.setBackgroundColor(0x66000000);
-            card.addView(track, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4), Gravity.BOTTOM));
+            FrameLayout.LayoutParams tlp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2), Gravity.BOTTOM);
+            tlp.setMargins(dp(8), 0, dp(8), dp(8));
+            card.addView(track, tlp);
             View bar = new View(ctx);
-            bar.setBackgroundColor(0xFFE5A00D);   // Plex amber
-            card.addView(bar, new FrameLayout.LayoutParams(0, dp(4), Gravity.BOTTOM | Gravity.START));
-            v.addView(card, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)));
-            TextView show = new TextView(ctx);
-            show.setTextColor(Color.WHITE);
-            show.setTextSize(14);
-            show.setSingleLine(true);
-            show.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            show.setPadding(0, dp(5), 0, 0);
-            v.addView(show);
-            TextView label = new TextView(ctx);
-            label.setTextColor(0x99FFFFFF);
-            label.setTextSize(12);
-            label.setSingleLine(true);
-            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            v.addView(label);
-            Holder h = new Holder(v, image, show, label, bar);
+            bar.setBackgroundColor(0xFFE5A00D);
+            FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(0, dp(2), Gravity.BOTTOM | Gravity.START);
+            blp.setMargins(dp(8), 0, 0, dp(8));
+            card.addView(bar, blp);
+            Holder h = new Holder(card, image, bar, track);
             h.frame.setCornerRadius(dp(6));
             h.frame.setColor(Color.TRANSPARENT);
-            card.setBackground(h.frame);
+            card.setForeground(h.frame);   // the stroke draws over the poster, clipped with it
             card.setClipToOutline(true);
-            v.setOnFocusChangeListener((view, focused) -> {
-                h.frame.setStroke(focused ? dp(3) : 0, Color.WHITE);
-                view.animate().scaleX(focused ? 1.06f : 1f).scaleY(focused ? 1.06f : 1f).setDuration(120).start();
+            card.setOutlineProvider(new android.view.ViewOutlineProvider() {
+                @Override public void getOutline(View view, android.graphics.Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(6));
+                }
+            });
+            card.setOnFocusChangeListener((view, focused) -> {
+                h.frame.setStroke(focused ? Math.round(1.5f * density) : 0, Color.WHITE);
+                view.animate().scaleX(focused ? 1.04f : 1f).scaleY(focused ? 1.04f : 1f).setDuration(120).start();
                 if (focused) {
                     int pos = h.getBindingAdapterPosition();
                     if (pos >= 0) lastFocused = pos;
                     host.onRowFocused();
+                    if (pos >= 0 && pos < items.size()) host.onItemFocused(items.get(pos));
                 }
             });
-            v.setOnClickListener(view -> {
+            card.setOnClickListener(view -> {
                 int pos = h.getBindingAdapterPosition();
                 if (pos >= 0 && pos < items.size()) open(items.get(pos));
             });
-            v.setOnKeyListener((view, keyCode, event) -> {
+            card.setOnKeyListener((view, keyCode, event) -> {
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
                 int pos = h.getBindingAdapterPosition();
                 switch (keyCode) {
@@ -351,16 +406,11 @@ final class PlexContinue {
 
         @Override public void onBindViewHolder(Holder h, int position) {
             Item it = items.get(position);
-            h.show.setText(it.show);
-            h.label.setText(it.title);
-            h.bar.getLayoutParams().width = 0;
-            h.bar.setTag(it.progress);
-            h.image.post(() -> {
-                if (h.bar.getTag() instanceof Integer) {
-                    h.bar.getLayoutParams().width = h.image.getWidth() * (Integer) h.bar.getTag() / 100;
-                    h.bar.requestLayout();
-                }
-            });
+            h.progress = it.progress;
+            size(h.itemView);
+            // Plex shows the bar only on items with progress.
+            h.bar.setVisibility(it.progress > 0 ? View.VISIBLE : View.GONE);
+            h.track.setVisibility(it.progress > 0 ? View.VISIBLE : View.GONE);
             Bitmap cached = thumbs.get(it.poster);
             h.image.setImageBitmap(cached);
             if (cached != null) return;

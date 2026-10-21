@@ -121,6 +121,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView heroName;
     private PlexBackdrop plex;   // null unless config.xml plex_url is set
     private PlexContinue plexRow;
+    /** The Continue Watching row has focus: posters at the Plex app's size, the dock slid down, details and art up. */
+    private boolean plexLarge;
+    private View plexScrim, plexDetails;
+    private TextView plexTitle, plexEpisode, plexMeta, plexSummary, plexCast;
+    private final PlexContinue.Host plexHost = new PlexContinue.Host() {
+        @Override public void onRowFocused() { enterPlexLarge(); }
+        @Override public void onItemFocused(PlexContinue.Item item) { showPlexDetails(item); }
+        @Override public void onItemsChanged() { refreshPlexRow(); }
+        @Override public void onRowUp() { leavePlexLarge(); plexRow.setShown(false); firstTopButton().requestFocus(); }
+        @Override public void onRowDown() { leavePlexLarge(); focusTile(plexDockPosition()); }
+    };
     /** The top shelf: heroName, plus the cinematic shelf's "Last opened" line and dock position dots. */
     private View hero;
     private TextView heroMeta;
@@ -333,13 +344,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         String plexUrl = getString(R.string.plex_url);
         String plexToken = Settings.Global.getString(getContentResolver(), "plex_token");
         if (!plexUrl.isEmpty() && plexToken != null && !plexToken.isEmpty()) {
-            float density = getResources().getDisplayMetrics().density;
-            // Plex backdrop only. The "Continue Watching" row was removed: Plex's watch/video deep link
-            // flashes its own "item not known" error often enough that the row was not worth keeping; the
-            // dock's Plex tile opens the app, where Continue Watching already lives. plexRow stays null and
-            // every plexRow reference is null-guarded, so nothing of the row is built or shown.
             plex = new PlexBackdrop(this, root, plexUrl, plexToken, getString(R.string.plex_sections), density);
+            // Continue Watching: shown while the Plex dock tile is focused, above the dock; Up grows it to Plex's size.
+            plexRow = new PlexContinue(this, plexHost, plexUrl, plexToken, density);
+            root.addView(plexRow.view(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         }
+        plexScrim = findViewById(R.id.plexScrim);
+        plexDetails = findViewById(R.id.plexDetails);
+        plexTitle = findViewById(R.id.plexTitle);
+        plexEpisode = findViewById(R.id.plexEpisode);
+        plexMeta = findViewById(R.id.plexMeta);
+        plexSummary = findViewById(R.id.plexSummary);
+        plexCast = findViewById(R.id.plexCast);
         sky = findViewById(R.id.sky);
         sky.setIntensity(cfg.skyIntensity);
         glass = findViewById(R.id.glass);
@@ -558,7 +575,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return true;
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 // Back to the dock tile Up came from, not wherever the focus finder lands.
-                if (plexRow == null || !plexRow.focus()) focusTile(lastFocused % COLUMNS);
+                focusTile(lastFocused % COLUMNS);
                 return true;
             }
             int firstButton = btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : firstTopButton().getId();
@@ -719,7 +736,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             hero.setAlpha(0f);
             ambient.setAlpha(0f);
             if (plex != null) plex.setCaptionShown(false);
-            if (plexRow != null) plexRow.setShown(true);   // focus restores to the dock
             heroArt.animate().cancel();
             heroArt.setAlpha(0f);
         }
@@ -808,7 +824,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         handler.removeCallbacks(minuteTick);
         stopStats();
         if (plex != null) plex.stop();
-        if (plexRow != null) plexRow.stop();
+        if (plexRow != null) { plexRow.stop(); leavePlexLarge(); }
         if (diya != null) diya.stop();
         cancelPendingFocusScroll();
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
@@ -906,6 +922,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (handleSettingsKey(event)) return true;
+        if (plexLarge && (event.getKeyCode() == KeyEvent.KEYCODE_BACK || event.getKeyCode() == KeyEvent.KEYCODE_ESCAPE)) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) plexHost.onRowDown();
+            return true;
+        }
         if (!reordering) return super.dispatchKeyEvent(event);
         if (dockEditing) return dispatchDockEdit(event);
         boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
@@ -1277,14 +1297,120 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
+    // ---- Plex Continue Watching ------------------------------------------------------------------
+
+    private static final String PLEX_PACKAGE = "com.plexapp.android";
+
+    private boolean isPlexDock(int position) {
+        return position < COLUMNS && PLEX_PACKAGE.equals(adapter.packageAt(position));
+    }
+
+    private int plexDockPosition() {
+        for (int i = 0; i < Math.min(COLUMNS, adapter.appCount()); i++) if (isPlexDock(i)) return i;
+        return lastFocused % COLUMNS;
+    }
+
+    /** Items arrived or changed while the Plex dock tile has focus: run the dock focus again so the row is placed. */
+    private void refreshPlexRow() {
+        if (plexLarge || adapter.appCount() == 0) return;
+        int pos = Math.max(0, Math.min(lastFocused, adapter.appCount() - 1));
+        RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
+        View card = vh == null ? null : vh.itemView.findViewById(R.id.card);
+        if (card != null && card.isFocused() && isPlexDock(pos)) onTileFocused(pos, card);
+    }
+
+    /** Compact row, bottom 14dp above the dock tiles (where the hero name sits for the other tiles). */
+    private void placePlexRow(float dockTopInRoot) {
+        View v = plexRow.view();
+        float y = dockTopInRoot - 14 * density - plexRow.height();
+        // No cancel here: setShown's fade may be running on the same animator, and y joins it.
+        if (animations && !reducedMotion && v.getAlpha() > 0f) v.animate().y(y).setDuration(260).start();
+        else v.setY(y);
+    }
+
+    /** Up into the row: Plex's poster size, the row near the bottom, the dock band peeking 16dp, details and art. */
+    private void enterPlexLarge() {
+        if (plexLarge || plexRow == null) return;
+        plexLarge = true;
+        hideGlass();
+        plexRow.setLarge(true);
+        plexRow.setShown(true);
+        View v = plexRow.view();
+        float rowY = root.getHeight() - 24 * density - plexRow.height();
+        // The dock is parked at the grid's top padding while a dock tile has focus: that is the band's top.
+        Rect g = tileRect;
+        g.set(0, 0, grid.getWidth(), grid.getHeight());
+        root.offsetDescendantRectToMyCoords(grid, g);
+        float dy = root.getHeight() - 16 * density - (g.top + grid.getPaddingTop());
+        plexScrim.setVisibility(View.VISIBLE);
+        plexDetails.setVisibility(View.VISIBLE);
+        grid.animate().cancel();
+        if (!animations || reducedMotion) {
+            v.setY(rowY);
+            grid.setTranslationY(dy);
+            plexScrim.setAlpha(1f);
+            plexDetails.setAlpha(1f);
+            return;
+        }
+        v.animate().y(rowY).setDuration(260).start();
+        grid.animate().translationY(dy).setDuration(260).start();
+        plexScrim.animate().alpha(1f).setDuration(260).start();
+        plexDetails.animate().alpha(1f).setDuration(260).start();
+    }
+
+    /** Back to the compact row: the dock returns, the details and scrim go, the slideshow resumes. */
+    private void leavePlexLarge() {
+        if (!plexLarge) return;
+        plexLarge = false;
+        plexRow.setLarge(false);
+        if (plex != null) plex.resumeSlideshow();
+        grid.animate().cancel();
+        plexScrim.animate().cancel();
+        plexDetails.animate().cancel();
+        if (!animations || reducedMotion) {
+            grid.setTranslationY(0f);
+            plexScrim.setAlpha(0f);
+            plexScrim.setVisibility(View.GONE);
+            plexDetails.setAlpha(0f);
+            plexDetails.setVisibility(View.GONE);
+            return;
+        }
+        grid.animate().translationY(0f).setDuration(260).start();
+        plexScrim.animate().alpha(0f).setDuration(260).withEndAction(() -> { if (!plexLarge) plexScrim.setVisibility(View.GONE); }).start();
+        plexDetails.animate().alpha(0f).setDuration(260).withEndAction(() -> { if (!plexLarge) plexDetails.setVisibility(View.GONE); }).start();
+    }
+
+    private void showPlexDetails(PlexContinue.Item item) {
+        plexTitle.setText(item.show);
+        boolean episode = !item.title.equals(item.show);
+        plexEpisode.setText(item.title);
+        plexEpisode.setVisibility(episode ? View.VISIBLE : View.GONE);
+        plexMeta.setText(item.meta);
+        plexMeta.setVisibility(item.meta.isEmpty() ? View.GONE : View.VISIBLE);
+        plexSummary.setText(item.summary);
+        plexSummary.setVisibility(item.summary.isEmpty() ? View.GONE : View.VISIBLE);
+        plexCast.setText(item.cast);
+        plexCast.setVisibility(item.cast.isEmpty() ? View.GONE : View.VISIBLE);
+        if (plex != null) plex.showArt(item.art);
+    }
+
     // ---- top shelf -------------------------------------------------------------------------------
 
     private void showHero(int position, float dockTopInRoot) {
         String label = adapter.labelAt(position);
         int color = adapter.ambientColorAt(position);
         float y = dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
+        boolean rowShown = plexRow != null && isPlexDock(position) && plexRow.hasItems();
+        if (rowShown) {
+            // The Plex tile: the Continue Watching row stands where the name would, the caption stays hidden.
+            hideHero();
+            if (plex != null) plex.setCaptionShown(false);
+            plexRow.setShown(true);
+            placePlexRow(dockTopInRoot);
+            return;
+        }
+        if (plexRow != null) plexRow.setShown(false);
         if (plex != null) plex.alignBottom(y + hero.getHeight());
-        if (plexRow != null) plexRow.setShown(true);
         boolean changed = !label.contentEquals(heroName.getText());
         if (cinematic) showHeroArt(position);
 
@@ -1792,8 +1918,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     rtlAppGrid, keyCode == KeyEvent.KEYCODE_DPAD_LEFT);
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-            if (position < COLUMNS) {                      // dock row: the Continue Watching row, else the top bar
-                return plexRow != null && plexRow.focus();
+            if (position < COLUMNS) {                      // dock row: the Continue Watching row from the Plex tile, else the top bar
+                return isPlexDock(position) && plexRow != null && plexRow.focus();
             }
             target = position - COLUMNS;
         } else {

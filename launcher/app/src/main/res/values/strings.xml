@@ -95,7 +95,7 @@
         <item quantity="other">%1$d apps</item>
     </plurals>
     <string name="plex_recently_added">Recently added: %1$s</string>
-    <string name="plex_continue">Continue watching</string>
+    <string name="plex_continue">Continue Watching</string>
     <!-- The greeting, then greeting_name: "Good morning, Mr. Trịnh". -->
     <string name="greeting_with_name">%1$s, %2$s</string>
 

@@ -59,6 +59,8 @@ final class PlexBackdrop {
     private boolean running;
     private Item current;
     private final Runnable slide = this::next;
+    /** Bumped by showArt/resumeSlideshow so a slower fetch from before cannot land over the newer image. */
+    private int gen;
 
     PlexBackdrop(Context ctx, FrameLayout root, String base, String token, String sections, float density) {
         this.ctx = ctx;
@@ -120,8 +122,37 @@ final class PlexBackdrop {
         main.removeCallbacks(slide);
     }
 
+    /** The Continue Watching row has focus: this item's art, undimmed, instead of the slideshow. */
+    void showArt(String art) {
+        main.removeCallbacks(slide);
+        final int g = ++gen;
+        if (art == null) return;
+        new Thread(() -> {
+            Bitmap bmp = fetchArt(art);
+            main.post(() -> {
+                if (g != gen || bmp == null) return;
+                wall.animate().cancel();
+                wall.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                    if (g != gen) return;
+                    wall.setImageBitmap(bmp);
+                    wall.animate().alpha(1f).setDuration(400).start();
+                }).start();
+            });
+        }, "plex-art").start();
+    }
+
+    /** Focus left the row: dim what is showing and let the slideshow carry on from here. */
+    void resumeSlideshow() {
+        ++gen;
+        wall.animate().cancel();
+        wall.animate().alpha(current == null ? 0f : DIM).setDuration(400).start();
+        main.removeCallbacks(slide);
+        if (running) main.postDelayed(slide, SLIDE_MS);
+    }
+
     private void next() {
         main.removeCallbacks(slide);
+        final int g = ++gen;
         if (!running || items.isEmpty()) return;
         Item pick = items.get(random.nextInt(items.size()));
         if (items.size() > 1 && pick == current) pick = items.get((items.indexOf(pick) + 1) % items.size());
@@ -129,6 +160,7 @@ final class PlexBackdrop {
         new Thread(() -> {
             Bitmap bmp = fetchArt(item.art);
             main.post(() -> {
+                if (g != gen) return;
                 if (!running || bmp == null) { main.postDelayed(slide, SLIDE_MS); return; }
                 current = item;
                 wall.animate().alpha(0f).setDuration(400).withEndAction(() -> {
