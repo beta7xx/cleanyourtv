@@ -183,6 +183,7 @@ final class PlexContinue {
     void setShown(boolean s) {
         if (shown == s) return;
         shown = s;
+        if (s && running && System.currentTimeMillis() - loadedAt > REFRESH_MS) new Thread(this::loadRow, "plex-refresh").start();
         row.animate().cancel();
         if (s) {
             if (!items.isEmpty()) row.setVisibility(View.VISIBLE);
@@ -214,6 +215,10 @@ final class PlexContinue {
         new Thread(() -> {
             if (machine == null) machine = fetchMachine();
             loadRow();
+            // Plex reports "paused" with its exact position a moment after Home; ending the session before that
+            // would store the last timeline ping's position instead and let the paused report re-register it.
+            try { Thread.sleep(3000); } catch (InterruptedException ignored) { }
+            if (!running) return;
             Set<String> mine = localAddresses();
             boolean ended = false;
             for (Session s : sessions()) if (mine.contains(s.address)) { endSession(s); ended = true; }
@@ -229,9 +234,12 @@ final class PlexContinue {
     }
 
     /** One small XML request every REFRESH_MS (10 s) while Home is on screen keeps the row in step with Plex. */
+    private long loadedAt;
+
     private void refresh() {
         if (!running) return;
-        new Thread(this::loadRow, "plex-refresh").start();
+        // Only while the row is on screen: hidden behind another tile's name there is nothing to keep fresh.
+        if (shown && row.getVisibility() == View.VISIBLE) new Thread(this::loadRow, "plex-refresh").start();
         main.postDelayed(refresh, REFRESH_MS);
     }
 
@@ -239,6 +247,7 @@ final class PlexContinue {
         List<Item> fresh = get("/hubs/continueWatching");
         if (fresh != null && fresh.isEmpty()) fresh = get("/library/onDeck");
         if (fresh == null) return;   // the server did not answer: keep what the row shows
+        loadedAt = System.currentTimeMillis();
         final List<Item> result = fresh;
         main.post(() -> {
             if (!running || same(items, result)) return;
@@ -249,11 +258,13 @@ final class PlexContinue {
         });
     }
 
-    /** Same items in the same order with the same progress: nothing to rebind (a rebind unsettles focus). */
+    /** Same items, order, progress, poster, title and meta: nothing to rebind (a rebind unsettles focus). */
     static boolean same(List<Item> a, List<Item> b) {
         if (a.size() != b.size()) return false;
         for (int i = 0; i < a.size(); i++)
-            if (!a.get(i).key.equals(b.get(i).key) || a.get(i).progress != b.get(i).progress) return false;
+            if (!a.get(i).key.equals(b.get(i).key) || a.get(i).progress != b.get(i).progress
+                    || !a.get(i).poster.equals(b.get(i).poster) || !a.get(i).title.equals(b.get(i).title)
+                    || !a.get(i).meta.equals(b.get(i).meta)) return false;
         return true;
     }
 
@@ -362,18 +373,14 @@ final class PlexContinue {
         @Override public long getItemId(int position) { return items.get(position).key.hashCode(); }
 
         /** The poster's size for the current mode, and the progress bar's width inside it. */
-        void size(View card) {
-            ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) card.getLayoutParams();
+        void size(Holder h) {
+            ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) h.itemView.getLayoutParams();
             lp.width = posterW();
             lp.height = posterH();
             lp.setMarginEnd(dp(GAP));
-            card.setLayoutParams(lp);
-            RecyclerView.ViewHolder vh = list.getChildViewHolder(card);
-            if (vh instanceof Holder) {
-                Holder h = (Holder) vh;
-                h.bar.getLayoutParams().width = (posterW() - 2 * dp(8)) * h.progress / 100;
-                h.bar.requestLayout();
-            }
+            h.itemView.setLayoutParams(lp);
+            h.bar.getLayoutParams().width = (posterW() - 2 * dp(8)) * h.progress / 100;
+            h.bar.requestLayout();
         }
 
         @Override public Holder onCreateViewHolder(ViewGroup parent, int type) {
@@ -426,6 +433,8 @@ final class PlexContinue {
                 int pos = h.getBindingAdapterPosition();
                 switch (keyCode) {
                     case KeyEvent.KEYCODE_DPAD_UP: host.onRowUp(); return true;
+                    case KeyEvent.KEYCODE_BACK:
+                    case KeyEvent.KEYCODE_ESCAPE:
                     case KeyEvent.KEYCODE_DPAD_DOWN: host.onRowDown(); return true;
                     case KeyEvent.KEYCODE_DPAD_LEFT: return pos == 0;                 // the ends stay put
                     case KeyEvent.KEYCODE_DPAD_RIGHT: return pos == items.size() - 1;
@@ -438,7 +447,7 @@ final class PlexContinue {
         @Override public void onBindViewHolder(Holder h, int position) {
             Item it = items.get(position);
             h.progress = it.progress;
-            size(h.itemView);
+            size(h);
             // Plex shows the bar only on items with progress.
             h.bar.setVisibility(it.progress > 0 ? View.VISIBLE : View.GONE);
             h.track.setVisibility(it.progress > 0 ? View.VISIBLE : View.GONE);

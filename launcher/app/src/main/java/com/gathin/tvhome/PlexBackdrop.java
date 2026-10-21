@@ -130,28 +130,46 @@ final class PlexBackdrop {
         main.removeCallbacks(slide);
     }
 
+    /** Art already fetched for the row, by path: gliding back over a poster costs nothing. About 4 MB. */
+    private final android.util.LruCache<String, Bitmap> arts = new android.util.LruCache<String, Bitmap>(4 * 1024 * 1024) {
+        @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
+    };
+    private Runnable pendingArt;
+    /** Focus rests this long on a poster before its art is fetched: holding Right across the row fetches one, not thirty. */
+    static final long ART_SETTLE_MS = 150;
+
     /** The Continue Watching row has focus: this item's art, undimmed, instead of the slideshow. */
     void showArt(String art) {
         main.removeCallbacks(slide);
+        if (pendingArt != null) main.removeCallbacks(pendingArt);
         final int g = ++gen;
         if (art == null) return;
-        new Thread(() -> {
+        Bitmap cached = arts.get(art);
+        if (cached != null) { swapArt(g, cached); return; }
+        pendingArt = () -> new Thread(() -> {
             Bitmap bmp = fetchArt(art);
             main.post(() -> {
                 if (g != gen || bmp == null) return;
-                wall.animate().cancel();
-                wall.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                    if (g != gen) return;
-                    wall.setImageBitmap(bmp);
-                    wall.animate().alpha(1f).setDuration(400).start();
-                }).start();
+                arts.put(art, bmp);
+                swapArt(g, bmp);
             });
         }, "plex-art").start();
+        main.postDelayed(pendingArt, ART_SETTLE_MS);
+    }
+
+    private void swapArt(int g, Bitmap bmp) {
+        wall.animate().cancel();
+        wall.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+            if (g != gen) return;
+            wall.setImageBitmap(bmp);
+            wall.animate().alpha(1f).setDuration(400).start();
+        }).start();
     }
 
     /** Focus left the row: dim what is showing and let the slideshow carry on from here. */
     void resumeSlideshow() {
         ++gen;
+        if (pendingArt != null) main.removeCallbacks(pendingArt);
         wall.animate().cancel();
         wall.animate().alpha(current == null ? 0f : DIM).setDuration(400).start();
         main.removeCallbacks(slide);
@@ -172,6 +190,7 @@ final class PlexBackdrop {
                 if (!running || bmp == null) { main.postDelayed(slide, SLIDE_MS); return; }
                 current = item;
                 wall.animate().alpha(0f).setDuration(400).withEndAction(() -> {
+                    if (g != gen) return;   // cancelled by showArt: a cancel still runs the end action
                     wall.setImageBitmap(bmp);
                     wall.animate().alpha(DIM).setDuration(600).start();
                 }).start();

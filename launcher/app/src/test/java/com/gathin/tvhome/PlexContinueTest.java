@@ -94,8 +94,10 @@ public class PlexContinueTest {
         List<PlexContinue.Item> a = parse("<Video key=\"/library/metadata/1\" title=\"A\" thumb=\"/t\" viewOffset=\"50\" duration=\"100\"/>");
         List<PlexContinue.Item> b = parse("<Video key=\"/library/metadata/1\" title=\"A\" thumb=\"/t\" viewOffset=\"50\" duration=\"100\"/>");
         List<PlexContinue.Item> c = parse("<Video key=\"/library/metadata/1\" title=\"A\" thumb=\"/t\" viewOffset=\"60\" duration=\"100\"/>");
+        List<PlexContinue.Item> d = parse("<Video key=\"/library/metadata/1\" title=\"A\" thumb=\"/t2\" viewOffset=\"50\" duration=\"100\"/>");
         assertTrue(PlexContinue.same(a, b));
         assertFalse(PlexContinue.same(a, c));
+        assertFalse(PlexContinue.same(a, d));   // a new poster under the same key is a change to show
         assertFalse(PlexContinue.same(a, Collections.emptyList()));
     }
 

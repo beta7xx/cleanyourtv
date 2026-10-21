@@ -369,7 +369,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
      * and the glass (MainActivity.onTileFocused) add this translation to the tiles' layout positions.
      */
     float dockShift() {
-        int free = dockSize - Math.min(dockSize, docked);
+        // Slots with no app, whatever filled the others: configured dock apps, fill_dock grid apps, or EMPTY entries.
+        int apps = 0;
+        for (int i = 0; i < Math.min(dockSize, items.size()); i++) if (items.get(i).kind != Entry.EMPTY) apps++;
+        int free = dockSize - apps;
         if (free <= 0 || reordering || grid == null) return 0f;
         int inner = grid.getWidth() - grid.getPaddingLeft() - grid.getPaddingRight();
         return inner <= 0 ? 0f : free * (inner / (float) dockSize) / 2f;
