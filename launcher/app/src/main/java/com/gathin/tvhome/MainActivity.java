@@ -481,9 +481,26 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             int h = b - t;
             // Item height follows the tile size, which follows the columns and the rows that must fit (AppAdapter.tileWidthPx).
+            // tvOS proportion: the dock and the grid sit in a centred band with 27dp between 150dp tiles. The side
+            // padding only grows when the columns have more width than that (4 columns on a 16:9 set); with 5 or
+            // 6 columns it stays 0 and the tiles shrink to fit as before.
+            int fullCell = Math.round((AppAdapter.DESIGN_W_DP * AppAdapter.FOCUS_SCALE + 12) * density);
+            int side = Math.max(0, ((r - l) - COLUMNS * fullCell) / 2);
+            if (grid.getPaddingLeft() != side) {
+                // Posted: a RecyclerView ignores requestLayout while it is laying out, and this runs from its layout.
+                grid.post(() -> {
+                    grid.setPadding(side, grid.getPaddingTop(), side, grid.getPaddingBottom());
+                    grid.post(this::refocusGlass);   // the tiles moved under the highlight
+                });
+            }
             int inner = (r - l) - grid.getPaddingLeft() - grid.getPaddingRight();
             int tileW = AppAdapter.tileWidthPx(inner, h, COLUMNS, rowsBelowDock, cfg.dockTitle, cfg.dockRow, density);
             int itemH = AppAdapter.itemHeightPx(AppAdapter.tileHeightPx(tileW), density);
+            // The band's edges in root coordinates: the first and last cards, centred in their cells, plus 14dp.
+            Rect gr = new Rect();
+            root.offsetDescendantRectToMyCoords(grid, gr);
+            int slack = (inner / COLUMNS - tileW) / 2, bandPad = Math.round(14 * density);
+            alignShelf(gr.left + grid.getPaddingLeft() + slack - bandPad, gr.left + (r - l) - grid.getPaddingRight() - slack + bandPad);
             int dockRow = itemH + (int) (AppAdapter.DOCK_EXTRA_DP * density);   // item height plus DockDecoration offsets
             int gridRows = itemH * rowsBelowDock;
             // Keep the hero below the header when the library is enabled on a short screen,
@@ -1282,6 +1299,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
+    /** The focused tile moved (the grid's side padding changed): run its focus again so the glass follows. */
+    private void refocusGlass() {
+        if (isDestroyed() || adapter.appCount() == 0) return;
+        int pos = Math.max(0, Math.min(lastFocused, adapter.appCount() - 1));
+        RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
+        View card = vh == null ? null : vh.itemView.findViewById(R.id.card);
+        if (card != null && card.isFocused()) onTileFocused(pos, card);
+    }
+
     /** Refits the glass to the focused holder once the grid layout and tile dimensions settle. */
     private void refitGlass() {
         if (isDestroyed() || adapter.appCount() == 0 || libraryFocusPending) return;
@@ -1296,6 +1322,27 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (!glassShown || card.getWidth() != glassCardW || glass.getWidth() != w || glass.getHeight() != h) {
             onTileFocused(pos, card);
         }
+    }
+
+    /** The band's left and right edges in root coordinates, once known; the shelf text lines up with them. */
+    private int shelfLeft = -1, shelfRight = -1;
+
+    /** Hero name, Plex row, details and caption line up 12dp inside the dock band, like tvOS's top shelf. */
+    private void alignShelf(int bandLeft, int bandRight) {
+        if (bandLeft == shelfLeft && bandRight == shelfRight) return;
+        shelfLeft = bandLeft;
+        shelfRight = bandRight;
+        int inset = Math.round(12 * density);
+        root.post(() -> {
+            // leftMargin, not setMarginStart: a start margin is resolved once per layout direction, and this
+            // launcher lays out left to right only (no supportsRtl).
+            ((ViewGroup.MarginLayoutParams) hero.getLayoutParams()).leftMargin = bandLeft + inset;
+            hero.requestLayout();
+            ((ViewGroup.MarginLayoutParams) plexDetails.getLayoutParams()).leftMargin = bandLeft + inset;
+            plexDetails.requestLayout();
+            if (plexRow != null) plexRow.setEdge(bandLeft + inset);
+            if (plex != null) plex.setEndMargin(root.getWidth() - bandRight + inset);
+        });
     }
 
     // ---- Plex Continue Watching ------------------------------------------------------------------

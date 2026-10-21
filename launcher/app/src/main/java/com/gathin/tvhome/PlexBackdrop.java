@@ -74,7 +74,7 @@ final class PlexBackdrop {
         root.addView(wall, root.indexOfChild(root.findViewById(R.id.heroArt)), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         caption = new TextView(ctx);
         caption.setTextColor(0xB3FFFFFF);
-        caption.setTextSize(18);
+        caption.setTextSize(16);
         caption.setSingleLine(true);
         caption.setAlpha(0f);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
@@ -86,6 +86,14 @@ final class PlexBackdrop {
     }
 
     private boolean captionShown;
+
+    /** The caption's right edge, in px from the screen's right: lined up with the dock band by the launcher. */
+    void setEndMargin(int px) {
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) caption.getLayoutParams();
+        if (lp.rightMargin == px) return;
+        lp.rightMargin = px;   // left-to-right launcher: the resolved margin, not the start/end one
+        caption.setLayoutParams(lp);
+    }
 
     /** Caption's bottom edge in root coordinates: aligned with the hero name above the dock, and shown with it. */
     void alignBottom(float bottom) {

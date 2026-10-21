@@ -70,7 +70,7 @@ final class PlexContinue {
     }
 
     /** Poster sizes in dp: compact above the dock, and the Plex app's own 122x182 when the row has focus. */
-    static final int SMALL_W = 88, SMALL_H = 132, LARGE_W = 122, LARGE_H = 182, GAP = 14, EDGE = 63;
+    static final int SMALL_W = 96, SMALL_H = 144, LARGE_W = 122, LARGE_H = 182, GAP = 14, EDGE = 63;
 
     static final class Item {
         final String key, show, title, poster, art, summary, cast, meta;
@@ -146,6 +146,14 @@ final class PlexContinue {
     }
 
     boolean hasItems() { return !items.isEmpty(); }
+
+    /** Left edge of the header and the posters, in px: the launcher lines it up with the dock band. */
+    void setEdge(int px) {
+        row.getChildAt(0).setPadding(px, 0, 0, dp(8));
+        list.setPadding(px, dp(6), px, dp(6));
+        // The layout manager keeps the first poster where it was when the padding changes; put it back at the edge.
+        ((LinearLayoutManager) list.getLayoutManager()).scrollToPositionWithOffset(0, 0);
+    }
 
     /** The row's height for the current size: header, the list's 6dp above and below, the poster. */
     int height() {
