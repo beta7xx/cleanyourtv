@@ -7,9 +7,6 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
-import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -45,14 +42,21 @@ import java.util.Set;
 import javax.xml.parsers.SAXParserFactory;
 
 /**
- * Plex "Continue Watching" as a row between the top bar and the dock (config.xml plex_url, token in
- * Settings.Global plex_token). Fetched on every Home resume (one small XML request), thumbs 512x288 through
- * Plex's transcoder, at most {@link #COUNT} of them cached. OK opens the item in the Plex app.
- * Up from the dock lands here when the row has items; Up from the row goes to the top bar.
+ * Plex "Continue Watching" (config.xml plex_url, token in Settings.Global plex_token), styled after the Plex
+ * app's own row: series posters, the focused item's details and art. Fetched on every Home resume (one small
+ * XML request), posters through Plex's transcoder, at most {@link #COUNT} of them cached.
+ *
+ * Opening an item sends the same link Plex's own Watch Next entries use, once; a cold Plex has not picked
+ * the local connection yet and shows its Remote Watch Pass screen instead, so the link is sent a second time
+ * after {@link #RESEND_MS} when the server still has no session for it from this TV. On Home, Plex pauses
+ * (with its Picture-in-Picture app-op denied, see the KD-49X8500F example) and the row ends its server
+ * session with the stopped timeline report Plex itself sends when Back leaves the player.
  */
 final class PlexContinue {
     static final int COUNT = 10;
-    private static final int TW = 512, TH = 288;
+    static final long RESEND_MS = 20_000;
+    static final long REFRESH_MS = 20_000;
+    private static final int TW = 176, TH = 264;   // 2x the compact 88x132dp poster
 
     interface Host {
         void onRowFocused();
@@ -61,13 +65,23 @@ final class PlexContinue {
     }
 
     static final class Item {
-        final String key, show, label, thumb;
+        final String key, show, title, poster, art, summary, cast, meta;
         final int progress;   // 0..100, viewOffset / duration
-        Item(String key, String show, String label, String thumb, int progress) {
-            this.key = key; this.show = show; this.label = label; this.thumb = thumb; this.progress = progress;
+        Item(String key, String show, String title, String poster, String art, String summary, String cast, String meta, int progress) {
+            this.key = key; this.show = show; this.title = title; this.poster = poster; this.art = art;
+            this.summary = summary; this.cast = cast; this.meta = meta; this.progress = progress;
         }
         /** "/library/metadata/137585" -> "137585", as the sessions list names it. */
         String ratingKey() { return key.substring(key.lastIndexOf('/') + 1); }
+    }
+
+    /** A server session: enough to report it stopped in the playing client's name. */
+    static final class Session {
+        final String ratingKey, key, client, time, duration, state, address;
+        Session(String ratingKey, String key, String client, String time, String duration, String state, String address) {
+            this.ratingKey = ratingKey; this.key = key; this.client = client; this.time = time;
+            this.duration = duration; this.state = state; this.address = address;
+        }
     }
 
     private final Context ctx;
@@ -83,6 +97,9 @@ final class PlexContinue {
     private List<Item> items = new ArrayList<>();
     private int lastFocused;
     private boolean running;
+    private boolean shown = true;
+    private final Runnable refresh = this::refresh;
+    private Runnable resend;
 
     PlexContinue(Context ctx, Host host, String base, String token, float density) {
         this.ctx = ctx;
@@ -114,8 +131,6 @@ final class PlexContinue {
 
     private int dp(int v) { return (int) (v * density); }
 
-    private boolean shown = true;
-
     /** Hidden (and unfocusable) while focus is down in the grid, where the dock moves up over this area. */
     void setShown(boolean s) {
         if (shown == s) return;
@@ -143,40 +158,17 @@ final class PlexContinue {
         return true;
     }
 
-    static final long REFRESH_MS = 20_000;
-    private final Runnable refresh = this::refresh;
-    private volatile boolean abortStop;
-
+    /** Home is in front: drop a pending resend (the user came back), end this TV's server sessions, refresh. */
     void start() {
         running = true;
-        // Home is back in front: never re-send a play link now.
-        if (pendingVerify != null) { main.removeCallbacks(pendingVerify); pendingVerify = null; }
-        abortStop = false;
+        if (resend != null) { main.removeCallbacks(resend); resend = null; }
         new Thread(() -> {
             if (machine == null) machine = fetchMachine();
-            loadRow();   // what the server knows right now, before the stop below settles
-            // Whatever this TV was streaming is stopped: its player paused, then the server session ended,
-            // so nothing lingers in the server's session list while Home is on screen. open() sets abortStop
-            // when a new video is started before this finishes, so the two never fight over the player.
-            List<Session> live = sessions();
-            if (!live.isEmpty() && !abortStop) {
-                main.post(this::stopPlayback);
-                // Wait for Plex's own "paused" report (its exact position) rather than the last timeline ping.
-                for (int i = 0; i < 8 && !abortStop; i++) {
-                    try { Thread.sleep(1000); } catch (InterruptedException ignored) { }
-                    List<Session> now = sessions();
-                    if (now.isEmpty()) { live = now; break; }
-                    live = now;
-                    boolean allPaused = true;
-                    for (Session s : now) allPaused &= "paused".equals(s.state);
-                    if (allPaused) break;
-                }
-                if (!abortStop) {
-                    for (Session s : live) endSession(s);
-                    loadRow();   // the item just stopped now carries its resume position
-                }
-                main.post(this::releaseFocus);
-            }
+            loadRow();
+            Set<String> mine = localAddresses();
+            boolean ended = false;
+            for (Session s : sessions()) if (mine.contains(s.address)) { endSession(s); ended = true; }
+            if (ended) loadRow();   // the item just stopped now carries its resume position
         }, "plex-continue").start();
         main.removeCallbacks(refresh);
         main.postDelayed(refresh, REFRESH_MS);
@@ -206,80 +198,38 @@ final class PlexContinue {
         });
     }
 
-    // Long enough that the first home-then-play attempt has really failed before a retry re-homes (a retry
-    // mid-start would itself flash the error); the play link alone takes several seconds to show a session.
-    static final long VERIFY_MS = 13_000;
-    static final int RETRIES = 2;
-    private Runnable pendingVerify;
+    // ---- opening ---------------------------------------------------------------------------------
 
-
+    /** The link Plex's own Watch Next entries carry; sent once, and once more if the server shows no playback. */
     private void open(Item item) {
         if (machine == null) return;
-        if (pendingVerify != null) main.removeCallbacks(pendingVerify);
-        abortStop = true;      // take over any Home stop sequence already running
-        releaseFocus();        // the new video needs the audio focus
-        launch(item);
-        schedule(item, 1);
+        if (resend != null) main.removeCallbacks(resend);
+        sendPlay(item);
+        resend = () -> new Thread(() -> {
+            if (needsResend(sessions(), localAddresses(), item.ratingKey())) main.post(() -> sendPlay(item));
+        }, "plex-resend").start();
+        main.postDelayed(resend, RESEND_MS);
     }
 
-    /**
-     * Send Plex to its own home, then play the item from there. Playing straight from one video into another
-     * makes Plex flash "Playback Error: Item not known when attempting to build decision" for several seconds,
-     * because the new item is not in the player's store mid-switch. From its home the item is known, so the
-     * play link starts cleanly (plex://home also drops the previous session). Found by decompiling the Plex
-     * APK; the same route BACK takes out of the player.
-     *
-     * The play link waits until Plex has really left the player (its session has cleared) rather than a fixed
-     * delay: a fixed wait is too short when Plex home loads slowly, and the link then lands on the old player
-     * and flashes the error. Polling the session adapts to however long it takes.
-     */
-    private final java.util.concurrent.atomic.AtomicInteger launchGen = new java.util.concurrent.atomic.AtomicInteger();
-
-    /**
-     * Play the item the way a person using Plex would: go to Plex's home first, let it settle, then play.
-     * Plex shows "Playback Error: Item not known when attempting to build decision" whenever a watch/video
-     * link reaches it before it knows the item — both on a cold start (its library has not loaded) and
-     * mid-switch (the old player is still tearing down). plex://home gets it to a state where the item is
-     * known; the wait then holds for the home to load its library (a minimum settle) and for any current
-     * player to have gone (its session cleared) before the play link is sent. Found by decompiling the Plex
-     * APK. If a newer launch starts meanwhile, this one drops out.
-     */
-    static final long HOME_MIN_SETTLE_MS = 5000;
-    static final long HOME_MAX_WAIT_MS = 13000;
-
-    private void launch(Item item) {
-        final int gen = launchGen.incrementAndGet();
-        new Thread(() -> {
-            main.post(() -> sendIntent("plex://home"));
-            long start = System.currentTimeMillis();
-            while (gen == launchGen.get()) {
-                long elapsed = System.currentTimeMillis() - start;
-                if (elapsed >= HOME_MAX_WAIT_MS) break;
-                if (elapsed >= HOME_MIN_SETTLE_MS && sessions().isEmpty()) break;
-                try { Thread.sleep(300); } catch (InterruptedException ignored) { }
-            }
-            main.post(() -> { if (gen == launchGen.get()) sendPlay(item); });
-        }, "plex-launch").start();
+    /** No session for the item from one of this TV's addresses: the first link met a cold Plex. */
+    static boolean needsResend(List<Session> sessions, Set<String> mine, String ratingKey) {
+        for (Session s : sessions) if (ratingKey.equals(s.ratingKey) && mine.contains(s.address)) return false;
+        return true;
     }
 
-    /**
-     * The only plex:// route this TV app (tv.plex.app, 2026) acts on: it starts playback of that item at once.
-     * plex://server/<id>/details and plex://preplay only bring the app to the front.
-     */
-    private AudioFocusRequest focus;
-
-    /** A server session played by this TV: enough to report it stopped in the TV client's name. */
-    static final class Session {
-        final String ratingKey, key, client, time, duration, state;
-        Session(String ratingKey, String key, String client, String time, String duration, String state) {
-            this.ratingKey = ratingKey; this.key = key; this.client = client; this.time = time; this.duration = duration; this.state = state;
-        }
+    private void sendPlay(Item item) {
+        String uri = "server://" + machine + "/com.plexapp.plugins.library" + item.key;
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("plex://watch/video?uri=" + Uri.encode(uri)));
+        i.setPackage("com.plexapp.android");
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try { ctx.startActivity(i); } catch (ActivityNotFoundException ignored) { }
     }
 
-    /** Sessions in /status/sessions whose player address is one of this TV's own IP addresses. */
+    // ---- sessions --------------------------------------------------------------------------------
+
+    /** Every session in /status/sessions with its Player's address. */
     private List<Session> sessions() {
         List<Session> out = new ArrayList<>();
-        Set<String> mine = localAddresses();
         try {
             HttpURLConnection c = open(base + "/status/sessions?X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) {
@@ -289,8 +239,9 @@ final class PlexContinue {
                         if ("Video".equals(tag)) {
                             rk = a.getValue("ratingKey"); key = a.getValue("key");
                             time = a.getValue("viewOffset"); dur = a.getValue("duration");
-                        } else if ("Player".equals(tag) && rk != null && mine.contains(a.getValue("address")) && a.getValue("machineIdentifier") != null) {
-                            out.add(new Session(rk, key, a.getValue("machineIdentifier"), time == null ? "0" : time, dur == null ? "0" : dur, a.getValue("state")));
+                        } else if ("Player".equals(tag) && rk != null && a.getValue("machineIdentifier") != null) {
+                            out.add(new Session(rk, key, a.getValue("machineIdentifier"), time == null ? "0" : time,
+                                    dur == null ? "0" : dur, a.getValue("state"), a.getValue("address")));
                         }
                     }
                 });
@@ -299,7 +250,7 @@ final class PlexContinue {
         return out;
     }
 
-    /** The timeline report a Plex client sends when it stops: the server drops the session on it (terminate needs rights this token lacks). */
+    /** The timeline report a Plex client sends when Back leaves its player: the server drops the session on it. */
     private void endSession(Session s) {
         try {
             HttpURLConnection c = open(base + "/:/timeline?ratingKey=" + s.ratingKey + "&key=" + URLEncoder.encode(s.key, "UTF-8")
@@ -319,67 +270,7 @@ final class PlexContinue {
         return out;
     }
 
-    /**
-     * Plex's watch/video playback runs in a foreground service and keeps playing after Home; media keys and the
-     * server cannot stop it. Taking audio focus for a moment makes its player pause, the way any player does
-     * when another app starts playing, and a permanent loss means it does not resume when the focus is given back.
-     */
-    private void stopPlayback() {
-        AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
-        if (am == null) return;
-        releaseFocus();
-        focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build())
-                .setOnAudioFocusChangeListener(change -> { }).build();
-        am.requestAudioFocus(focus);
-        // The caller releases the focus when its stop sequence is done (or open() releases it to hand the
-        // focus to the next video); a 12 s safety net covers any path that forgets. It must outlast the
-        // stop poll loops, or Plex regains focus and resumes mid-stop.
-        main.postDelayed(this::releaseFocus, 12000);
-    }
-
-    private void releaseFocus() {
-        if (focus == null) return;
-        AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
-        if (am != null) am.abandonAudioFocusRequest(focus);
-        focus = null;
-    }
-
-    private void sendPlay(Item item) {
-        String uri = "server://" + machine + "/com.plexapp.plugins.library" + item.key;
-        sendIntent("plex://watch/video?uri=" + Uri.encode(uri));
-    }
-
-    private void sendIntent(String data) {
-        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(data));
-        i.setPackage("com.plexapp.android");
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        try { ctx.startActivity(i); } catch (ActivityNotFoundException ignored) { }
-    }
-
-    /**
-     * A cold-started Plex can drop the first link while it is still launching, so nothing plays. The server's
-     * session list says whether this TV already has a session for the item (buffering or playing). Only when it
-     * does NOT is the link sent again, once the app is warm: re-sending onto a session that is already starting
-     * makes Plex show "Playback error", and a warm app resumes at the server's stored position on its own, so a
-     * single successful send is left strictly alone.
-     */
-    private void schedule(Item item, int attempt) {
-        pendingVerify = () -> new Thread(() -> {
-            if (hasSession(item.ratingKey())) return;   // the send worked; never send a second time over it
-            if (attempt > RETRIES) return;
-            // Re-home before retrying too: a bare play link onto a Plex that has not resolved the item yet
-            // is exactly what flashes the "item not known" error.
-            main.post(() -> { launch(item); schedule(item, attempt + 1); });
-        }, "plex-verify").start();
-        main.postDelayed(pendingVerify, VERIFY_MS);
-    }
-
-    /** Does this TV already have a session (any state) for the item? Then the play link took, and must not repeat. */
-    private boolean hasSession(String ratingKey) {
-        for (Session s : sessions()) if (ratingKey.equals(s.ratingKey)) return true;
-        return false;
-    }
+    // ---- row view --------------------------------------------------------------------------------
 
     private final class Holder extends RecyclerView.ViewHolder {
         final ImageView image;
@@ -399,7 +290,7 @@ final class PlexContinue {
             LinearLayout v = new LinearLayout(ctx);
             v.setOrientation(LinearLayout.VERTICAL);
             v.setFocusable(true);
-            v.setLayoutParams(new RecyclerView.LayoutParams(dp(172), ViewGroup.LayoutParams.WRAP_CONTENT));
+            v.setLayoutParams(new RecyclerView.LayoutParams(dp(100), ViewGroup.LayoutParams.WRAP_CONTENT));
             v.setPadding(dp(6), dp(6), dp(6), dp(6));
             FrameLayout card = new FrameLayout(ctx);
             ImageView image = new ImageView(ctx);
@@ -412,7 +303,7 @@ final class PlexContinue {
             View bar = new View(ctx);
             bar.setBackgroundColor(0xFFE5A00D);   // Plex amber
             card.addView(bar, new FrameLayout.LayoutParams(0, dp(4), Gravity.BOTTOM | Gravity.START));
-            v.addView(card, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(90)));
+            v.addView(card, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)));
             TextView show = new TextView(ctx);
             show.setTextColor(Color.WHITE);
             show.setTextSize(14);
@@ -427,7 +318,7 @@ final class PlexContinue {
             label.setEllipsize(android.text.TextUtils.TruncateAt.END);
             v.addView(label);
             Holder h = new Holder(v, image, show, label, bar);
-            h.frame.setCornerRadius(dp(8));
+            h.frame.setCornerRadius(dp(6));
             h.frame.setColor(Color.TRANSPARENT);
             card.setBackground(h.frame);
             card.setClipToOutline(true);
@@ -461,7 +352,7 @@ final class PlexContinue {
         @Override public void onBindViewHolder(Holder h, int position) {
             Item it = items.get(position);
             h.show.setText(it.show);
-            h.label.setText(it.label);
+            h.label.setText(it.title);
             h.bar.getLayoutParams().width = 0;
             h.bar.setTag(it.progress);
             h.image.post(() -> {
@@ -470,16 +361,16 @@ final class PlexContinue {
                     h.bar.requestLayout();
                 }
             });
-            Bitmap cached = thumbs.get(it.thumb);
+            Bitmap cached = thumbs.get(it.poster);
             h.image.setImageBitmap(cached);
             if (cached != null) return;
             new Thread(() -> {
-                Bitmap b = fetchThumb(it.thumb);
+                Bitmap b = fetchThumb(it.poster);
                 if (b == null) return;
                 main.post(() -> {
-                    thumbs.put(it.thumb, b);
+                    thumbs.put(it.poster, b);
                     int pos = h.getBindingAdapterPosition();
-                    if (pos >= 0 && pos < items.size() && items.get(pos).thumb.equals(it.thumb)) h.image.setImageBitmap(b);
+                    if (pos >= 0 && pos < items.size() && items.get(pos).poster.equals(it.poster)) h.image.setImageBitmap(b);
                 });
             }, "plex-thumb").start();
         }
@@ -532,30 +423,52 @@ final class PlexContinue {
         }
     }
 
-    /** Episodes: series name + "S1 E2 · title"; movies: title + year. Items without key or thumb are skipped. */
+    /**
+     * What the Plex app shows per item: the series poster (the movie's own for movies), the backdrop art, a
+     * meta line ("E2 · 2026-10-16 · 50m · TV-MA", or "2024 · 90m" for a movie), the summary and three cast
+     * names. Items without any poster are skipped.
+     */
     static List<Item> parse(InputStream in) throws Exception {
         List<Item> out = new ArrayList<>();
         SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+            String key, show, title, poster, art, summary, meta;
+            int progress;
+            List<String> cast;
+
             @Override public void startElement(String uri, String local, String tag, Attributes a) {
-                if (out.size() >= COUNT || !"Video".equals(tag)) return;
-                String key = a.getValue("key"), title = a.getValue("title"), thumb = a.getValue("thumb");
-                if (key == null || title == null || thumb == null) return;
-                String show = a.getValue("grandparentTitle");
-                String label;
-                if (show != null) {
-                    String s = a.getValue("parentIndex"), e = a.getValue("index");
-                    label = (s != null && e != null ? "S" + s + " E" + e + " · " : "") + title;
-                } else {
-                    show = title;
-                    String year = a.getValue("year");
-                    label = year != null ? year : "";
+                if ("Role".equals(tag) && cast != null) {
+                    if (cast.size() < 3 && a.getValue("tag") != null) cast.add(a.getValue("tag"));
+                    return;
                 }
-                int progress = 0;
+                if (!"Video".equals(tag) || out.size() >= COUNT) return;
+                key = a.getValue("key"); title = a.getValue("title");
+                poster = a.getValue("grandparentThumb") != null ? a.getValue("grandparentThumb") : a.getValue("thumb");
+                if (key == null || title == null || poster == null) { key = null; return; }
+                show = a.getValue("grandparentTitle") != null ? a.getValue("grandparentTitle") : title;
+                art = a.getValue("art") != null ? a.getValue("art") : a.getValue("grandparentArt");
+                summary = a.getValue("summary") == null ? "" : a.getValue("summary");
+                cast = new ArrayList<>();
+                List<String> parts = new ArrayList<>();
+                if (a.getValue("grandparentTitle") != null) {
+                    if (a.getValue("index") != null) parts.add("E" + a.getValue("index"));
+                    if (a.getValue("originallyAvailableAt") != null) parts.add(a.getValue("originallyAvailableAt"));
+                } else if (a.getValue("year") != null) parts.add(a.getValue("year"));
+                long dur = 0;
+                try { dur = Long.parseLong(a.getValue("duration")); } catch (Exception ignored) { }
+                if (dur > 0) parts.add(dur / 60000 + "m");
+                if (a.getValue("contentRating") != null) parts.add(a.getValue("contentRating"));
+                meta = String.join(" · ", parts);
+                progress = 0;
                 try {
-                    long off = Long.parseLong(a.getValue("viewOffset")), dur = Long.parseLong(a.getValue("duration"));
+                    long off = Long.parseLong(a.getValue("viewOffset"));
                     if (dur > 0) progress = (int) Math.max(0, Math.min(100, off * 100 / dur));
                 } catch (Exception ignored) { }
-                out.add(new Item(key, show, label, thumb, progress));
+            }
+
+            @Override public void endElement(String uri, String local, String tag) {
+                if (!"Video".equals(tag) || key == null) return;
+                out.add(new Item(key, show, title, poster, art, summary, String.join(", ", cast), meta, progress));
+                key = null; cast = null;
             }
         });
         return out;
