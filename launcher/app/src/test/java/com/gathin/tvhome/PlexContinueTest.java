@@ -33,7 +33,9 @@ public class PlexContinueTest {
         assertEquals("ตอนที่ 2", it.title);
         assertEquals("/library/metadata/137827/thumb/2", it.poster);
         assertEquals("/library/metadata/137827/art/3", it.art);
-        assertEquals("E2 · 2026-10-16 · 50m · TV-MA", it.meta);
+        assertEquals("E2 · " + PlexContinue.displayDate("2026-10-16") + " · 50m · TV-MA", it.meta);
+        assertFalse(PlexContinue.displayDate("2026-10-16").isEmpty());
+        assertEquals("not-a-date", PlexContinue.displayDate("not-a-date"));
         assertEquals("A-Chou agrees to marry Lu Zhuo.", it.summary);
         assertEquals("Tian Xiwei, Yan An, Pan Junya", it.cast);
         assertEquals(74, it.progress);

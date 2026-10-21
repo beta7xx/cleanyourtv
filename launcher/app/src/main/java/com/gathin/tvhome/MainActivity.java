@@ -648,6 +648,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         } else {
             // Still on screen (the quick panel was over it, or Home was already in front): the tiles are current,
             // so only go back to the first one; rebuilding would replay the entrance animation for nothing.
+            leavePlexLarge();
             grid.post(() -> focusTile(0));
         }
     }
@@ -1324,10 +1325,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (card != null && card.isFocused() && isPlexDock(pos)) onTileFocused(pos, card);
     }
 
-    /** Compact row, bottom 14dp above the dock tiles (where the hero name sits for the other tiles). */
+    /** Compact row, bottom 26dp above the dock tiles: 18dp of air over the band, the hero name's own clearance. */
     private void placePlexRow(float dockTopInRoot) {
         View v = plexRow.view();
-        float y = dockTopInRoot - 14 * density - plexRow.height();
+        float y = dockTopInRoot - 26 * density - plexRow.height();
         // No cancel here: setShown's fade may be running on the same animator, and y joins it.
         if (animations && !reducedMotion && v.getAlpha() > 0f) v.animate().y(y).setDuration(260).start();
         else v.setY(y);

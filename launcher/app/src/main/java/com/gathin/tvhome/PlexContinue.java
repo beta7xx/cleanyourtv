@@ -128,13 +128,14 @@ final class PlexContinue {
         TextView title = new TextView(ctx);
         title.setText(R.string.plex_continue);
         title.setTextColor(Color.WHITE);
-        title.setTextSize(18);
+        title.setTextSize(20);
         title.setTypeface(ctx.getResources().getFont(R.font.outfit_medium));
-        title.setPadding(dp(EDGE), 0, 0, dp(GAP));
+        title.setPadding(dp(EDGE), 0, 0, dp(8));   // plus the list's 6dp: Plex's 14dp from header to posters
         row.addView(title);
         list = new RecyclerView(ctx);
         list.setLayoutManager(new LinearLayoutManager(ctx, RecyclerView.HORIZONTAL, false));
         adapter.setHasStableIds(true);   // a refresh keeps the focused poster focused
+        list.setItemAnimator(null);      // a size switch rebinds every poster: no cross-fade between two sizes
         list.setAdapter(adapter);
         list.setClipToPadding(false);
         list.setClipChildren(false);
@@ -496,6 +497,15 @@ final class PlexContinue {
         }
     }
 
+    /** "2026-10-16" as the TV's locale writes a medium date, as the Plex app does; the raw value when it is not a date. */
+    static String displayDate(String iso) {
+        try {
+            return java.time.LocalDate.parse(iso).format(java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM));
+        } catch (Exception e) {
+            return iso;
+        }
+    }
+
     /**
      * What the Plex app shows per item: the series poster (the movie's own for movies), the backdrop art, a
      * meta line ("E2 · 2026-10-16 · 50m · TV-MA", or "2024 · 90m" for a movie), the summary and three cast
@@ -524,7 +534,7 @@ final class PlexContinue {
                 List<String> parts = new ArrayList<>();
                 if (a.getValue("grandparentTitle") != null) {
                     if (a.getValue("index") != null) parts.add("E" + a.getValue("index"));
-                    if (a.getValue("originallyAvailableAt") != null) parts.add(a.getValue("originallyAvailableAt"));
+                    if (a.getValue("originallyAvailableAt") != null) parts.add(displayDate(a.getValue("originallyAvailableAt")));
                 } else if (a.getValue("year") != null) parts.add(a.getValue("year"));
                 long dur = 0;
                 try { dur = Long.parseLong(a.getValue("duration")); } catch (Exception ignored) { }
