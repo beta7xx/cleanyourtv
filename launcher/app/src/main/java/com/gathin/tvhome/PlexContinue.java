@@ -110,6 +110,8 @@ final class PlexContinue {
     private boolean shown = true;
     private final Runnable refresh = this::refresh;
     private Runnable resend;
+    /** Bumped by start() and open(): a resend check already running (sessions() can take seconds) must not send after Home resumed. */
+    private int resendGen;
     private boolean large;
 
     PlexContinue(Context ctx, Host host, String base, String token, float density) {
@@ -198,6 +200,7 @@ final class PlexContinue {
     /** Home is in front: drop a pending resend (the user came back), end this TV's server sessions, refresh. */
     void start() {
         running = true;
+        resendGen++;
         if (resend != null) { main.removeCallbacks(resend); resend = null; }
         new Thread(() -> {
             if (machine == null) machine = fetchMachine();
@@ -225,7 +228,8 @@ final class PlexContinue {
 
     private void loadRow() {
         List<Item> fresh = get("/hubs/continueWatching");
-        if (fresh.isEmpty()) fresh = get("/library/onDeck");
+        if (fresh != null && fresh.isEmpty()) fresh = get("/library/onDeck");
+        if (fresh == null) return;   // the server did not answer: keep what the row shows
         final List<Item> result = fresh;
         main.post(() -> {
             if (!running || same(items, result)) return;
@@ -250,16 +254,24 @@ final class PlexContinue {
     private void open(Item item) {
         if (machine == null) return;
         if (resend != null) main.removeCallbacks(resend);
+        final int g = ++resendGen;
         sendPlay(item);
         resend = () -> new Thread(() -> {
-            if (needsResend(sessions(), localAddresses(), item.ratingKey())) main.post(() -> sendPlay(item));
+            if (g != resendGen) return;
+            boolean again = needsResend(sessions(), localAddresses());
+            main.post(() -> { if (again && g == resendGen) sendPlay(item); });
         }, "plex-resend").start();
         main.postDelayed(resend, RESEND_MS);
     }
 
-    /** No session for the item from one of this TV's addresses: the first link met a cold Plex. */
-    static boolean needsResend(List<Session> sessions, Set<String> mine, String ratingKey) {
-        for (Session s : sessions) if (ratingKey.equals(s.ratingKey) && mine.contains(s.address)) return false;
+    /**
+     * No video session at all from this TV: the first link met a cold Plex. Any session, even another title
+     * the user picked inside Plex meanwhile, means the link is not sent again (it would yank them back).
+     * shortcut: a user who backs out of the player into Plex's home within 20 s still gets the resend; telling
+     * that apart needs to know which app is in front, upgrade if it is ever reported.
+     */
+    static boolean needsResend(List<Session> sessions, Set<String> mine) {
+        for (Session s : sessions) if (mine.contains(s.address)) return false;
         return true;
     }
 
@@ -273,26 +285,33 @@ final class PlexContinue {
 
     // ---- sessions --------------------------------------------------------------------------------
 
-    /** Every session in /status/sessions with its Player's address. */
+    /** Every video session in /status/sessions with its Player's address; empty when the request failed. */
     private List<Session> sessions() {
-        List<Session> out = new ArrayList<>();
         try {
             HttpURLConnection c = open(base + "/status/sessions?X-Plex-Token=" + token);
-            try (InputStream in = c.getInputStream()) {
-                SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
-                    String rk, key, time, dur;
-                    @Override public void startElement(String uri, String l, String tag, Attributes a) {
-                        if ("Video".equals(tag)) {
-                            rk = a.getValue("ratingKey"); key = a.getValue("key");
-                            time = a.getValue("viewOffset"); dur = a.getValue("duration");
-                        } else if ("Player".equals(tag) && rk != null && a.getValue("machineIdentifier") != null) {
-                            out.add(new Session(rk, key, a.getValue("machineIdentifier"), time == null ? "0" : time,
-                                    dur == null ? "0" : dur, a.getValue("state"), a.getValue("address")));
-                        }
-                    }
-                });
-            } finally { c.disconnect(); }
+            try (InputStream in = c.getInputStream()) { return parseSessions(in); } finally { c.disconnect(); }
         } catch (Exception ignored) { }
+        return new ArrayList<>();
+    }
+
+    /** Video sessions only: a Player inside a Track or Photo (music, a slideshow) is not a video to stop. */
+    static List<Session> parseSessions(InputStream in) throws Exception {
+        List<Session> out = new ArrayList<>();
+        SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+            String rk, key, time, dur;
+            @Override public void startElement(String uri, String l, String tag, Attributes a) {
+                if ("Video".equals(tag)) {
+                    rk = a.getValue("ratingKey"); key = a.getValue("key");
+                    time = a.getValue("viewOffset"); dur = a.getValue("duration");
+                } else if ("Player".equals(tag) && rk != null && a.getValue("machineIdentifier") != null) {
+                    out.add(new Session(rk, key, a.getValue("machineIdentifier"), time == null ? "0" : time,
+                            dur == null ? "0" : dur, a.getValue("state"), a.getValue("address")));
+                }
+            }
+            @Override public void endElement(String uri, String l, String tag) {
+                if ("Video".equals(tag)) rk = null;
+            }
+        });
         return out;
     }
 
@@ -438,12 +457,13 @@ final class PlexContinue {
         return c;
     }
 
+    /** The hub's items, or null when the request failed. */
     private List<Item> get(String path) {
         try {
             HttpURLConnection c = open(base + path + "?X-Plex-Token=" + token);   // the whole hub, as Plex shows it
             try (InputStream in = c.getInputStream()) { return parse(in); } finally { c.disconnect(); }
         } catch (Exception e) {
-            return new ArrayList<>();
+            return null;
         }
     }
 

@@ -1312,7 +1312,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     /** Items arrived or changed while the Plex dock tile has focus: run the dock focus again so the row is placed. */
     private void refreshPlexRow() {
-        if (plexLarge || adapter.appCount() == 0) return;
+        if (plexLarge) {
+            // The hub emptied under the focused row (finished elsewhere): back to the Plex tile, nothing stranded.
+            if (!plexRow.hasItems()) { leavePlexLarge(); focusTile(plexDockPosition()); }
+            return;
+        }
+        if (adapter.appCount() == 0) return;
         int pos = Math.max(0, Math.min(lastFocused, adapter.appCount() - 1));
         RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
         View card = vh == null ? null : vh.itemView.findViewById(R.id.card);

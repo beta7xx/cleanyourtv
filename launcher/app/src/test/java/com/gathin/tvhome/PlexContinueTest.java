@@ -61,14 +61,30 @@ public class PlexContinueTest {
     }
 
     @Test
-    public void needsResendOnlyWhenNoSessionFromThisTv() {
-        List<PlexContinue.Session> sessions = Arrays.asList(
-                new PlexContinue.Session("1", "/library/metadata/1", "client-a", "0", "0", "playing", "192.168.1.9"),
-                new PlexContinue.Session("2", "/library/metadata/2", "client-b", "0", "0", "buffering", "192.168.1.7"));
+    public void needsResendOnlyWhenThisTvHasNoVideoSessionAtAll() {
         Set<String> mine = Collections.singleton("192.168.1.7");
-        assertTrue(PlexContinue.needsResend(sessions, mine, "1"));
-        assertFalse(PlexContinue.needsResend(sessions, mine, "2"));
-        assertTrue(PlexContinue.needsResend(Collections.emptyList(), mine, "2"));
+        List<PlexContinue.Session> others = Collections.singletonList(
+                new PlexContinue.Session("1", "/library/metadata/1", "client-a", "0", "0", "playing", "192.168.1.9"));
+        List<PlexContinue.Session> mineToo = Arrays.asList(others.get(0),
+                new PlexContinue.Session("2", "/library/metadata/2", "client-b", "0", "0", "buffering", "192.168.1.7"));
+        assertTrue(PlexContinue.needsResend(Collections.emptyList(), mine));
+        assertTrue(PlexContinue.needsResend(others, mine));
+        // Any video from this TV, even another title the user picked inside Plex meanwhile: never yank them back.
+        assertFalse(PlexContinue.needsResend(mineToo, mine));
+    }
+
+    @Test
+    public void sessionParserDoesNotCarryAVideoOntoALaterTrack() throws Exception {
+        String xml = "<MediaContainer>"
+                + "<Video ratingKey=\"1\" key=\"/library/metadata/1\" viewOffset=\"5\" duration=\"10\">"
+                + "<Player machineIdentifier=\"client-a\" address=\"192.168.1.9\" state=\"playing\"/></Video>"
+                + "<Track ratingKey=\"7\" key=\"/library/metadata/7\">"
+                + "<Player machineIdentifier=\"client-b\" address=\"192.168.1.7\" state=\"playing\"/></Track>"
+                + "</MediaContainer>";
+        List<PlexContinue.Session> out = PlexContinue.parseSessions(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
+        assertEquals(1, out.size());
+        assertEquals("1", out.get(0).ratingKey);
+        assertEquals("192.168.1.9", out.get(0).address);
     }
 
     @Test
