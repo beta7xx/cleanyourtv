@@ -57,6 +57,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         void onLibraryRequested();
         void onLibraryFocused();
         void onLibraryUp();
+        /** The reorder pill in the footer row (config.xml reorder_button). */
+        void onReorderRequested();
     }
 
     static final class Entry {
@@ -189,6 +191,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     private final boolean animations;
     private final boolean advancedEffects;
     private final boolean showLibrary;
+    /** config.xml reorder_button: the reorder pill beside the app library pill in the footer row. */
+    private final boolean reorderButton;
+    /** The footer's reorder pill while one is bound, to show reorder mode as its activated state. */
+    private View footerReorder;
     /** Packages with a leanback entry at the last reload(): their tiles launch with the leanback category. */
     private Set<String> leanbackPackages = new HashSet<>();
     private final boolean showHomeSettings;
@@ -211,6 +217,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         this.advancedEffects = cfg.animations && cfg.advancedEffects;
         this.showHomeSettings = cfg.showHomeSettingsShortcut;
         this.showLibrary = cfg.appLibrary;
+        this.reorderButton = cfg.reorderButton;
         this.reducedMotion = cfg.reducedMotion;
         this.rowsBelowDock = cfg.rowsBelowDock;
         this.dockTitle = cfg.dockTitle;
@@ -356,14 +363,26 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         if (viewType == 1) {
             View row = LayoutInflater.from(ctx).inflate(R.layout.row_app_library, parent, false);
             View button = row.findViewById(R.id.btnLibrary);
+            View reorder = row.findViewById(R.id.btnReorderFooter);
+            reorder.setVisibility(reorderButton ? View.VISIBLE : View.GONE);
+            reorder.setActivated(reordering);
+            footerReorder = reorder;
             button.setOnClickListener(v -> listener.onLibraryRequested());
-            button.setOnFocusChangeListener((v, focused) -> { if (focused) listener.onLibraryFocused(); });
-            button.setOnKeyListener((v, key, event) -> {
+            reorder.setOnClickListener(v -> listener.onReorderRequested());
+            View.OnFocusChangeListener footerFocus = (v, focused) -> { if (focused) listener.onLibraryFocused(); };
+            button.setOnFocusChangeListener(footerFocus);
+            reorder.setOnFocusChangeListener(footerFocus);
+            // Left/Right move between the two pills and stay put at the ends; Up leaves to the grid; Down is the end.
+            View.OnKeyListener footerKeys = (v, key, event) -> {
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
                 if (key == KeyEvent.KEYCODE_DPAD_UP) listener.onLibraryUp();
+                else if (key == KeyEvent.KEYCODE_DPAD_RIGHT && v == button && reorder.getVisibility() == View.VISIBLE) reorder.requestFocus();
+                else if (key == KeyEvent.KEYCODE_DPAD_LEFT && v == reorder) button.requestFocus();
                 return key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN
                         || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT;
-            });
+            };
+            button.setOnKeyListener(footerKeys);
+            reorder.setOnKeyListener(footerKeys);
             return new RecyclerView.ViewHolder(row) { };
         }
         View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_app, parent, false);
@@ -505,6 +524,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
     /** Reorder mode on or off; takes effect at the next reload() (empty dock slots are left out while on). */
     void setReordering(boolean on) {
+        if (footerReorder != null) footerReorder.setActivated(on);
         reordering = on;
     }
 
