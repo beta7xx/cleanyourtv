@@ -153,9 +153,9 @@
          for bigger tiles when rows_below_dock is 2 or 3. -->
     <bool name="dock_title">true</bool>
 
-    <!-- Tiles per row in the grid; the dock always has this many slots. Tiles are 180dp wide at 4 columns and
-         shrink to fit from 5 up (about 144dp at 5, 117dp at 6 on a 1080p TV). -->
-    <integer name="columns">4</integer>
+    <!-- Tiles per row in the grid; the dock always has this many slots. Tiles are 150dp wide at 4 columns and
+         shrink to fit from 5 up (about 143dp at 5, 117dp at 6 on a 1080p TV); 5 fills a 16:9 set edge to edge. -->
+    <integer name="columns">5</integer>
 
     <!-- Basic motion is on; advanced effects are opt-in in the launcher's own Settings screen. -->
     <bool name="animations">true</bool>
