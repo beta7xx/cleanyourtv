@@ -506,7 +506,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // Keep the hero below the header when the library is enabled on a short screen,
             // even when the theme requests an extra visible row below the dock.
             int shelfClearance = cfg.appLibrary ? hero.getMeasuredHeight() + (int) (40 * density) : 0;
-            int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (AppAdapter.BOTTOM_ROOM_DP * density));
+            // With the title shelf the dock tiles show no name underneath, so the item's name room (the 7dp gap and
+            // the 22dp label) is empty: let the dock sit that much lower, 24dp of band above the screen's edge.
+            int dockNameRoom = MainActivity.this.dockRow && cfg.dockTitle ? Math.round(29 * density) : 0;
+            int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (AppAdapter.BOTTOM_ROOM_DP * density) + dockNameRoom);
             // Where the rows cannot fit even at the smallest tile (3 rows with the title on), the title keeps its
             // room above the dock and the last rows run off the bottom instead of the title drawing over the clock.
             if (MainActivity.this.dockRow && cfg.dockTitle && rowsBelowDock > 0) want = Math.max(want, (int) (AppAdapter.TITLE_ROOM_DP * density));
@@ -1368,10 +1371,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         refocusGlass();   // runs the dock tile's focus again, which places or hides the row
     }
 
-    /** Compact row, bottom 26dp above the dock tiles: 18dp of air over the band, the hero name's own clearance. */
+    /**
+     * Compact row, bottom 36dp above the dock tiles: with the band's 14dp pad and the list's 6dp, 28dp of air
+     * between posters and band, twice the 14dp between header and posters, so the row reads as its own group.
+     */
     private void placePlexRow(float dockTopInRoot) {
         View v = plexRow.view();
-        float y = dockTopInRoot - 26 * density - plexRow.height();
+        float y = dockTopInRoot - 36 * density - plexRow.height();
         // No cancel here: setShown's fade may be running on the same animator, and y joins it.
         if (animations && !reducedMotion && v.getAlpha() > 0f) v.animate().y(y).setDuration(260).start();
         else v.setY(y);
