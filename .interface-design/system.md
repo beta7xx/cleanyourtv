@@ -23,14 +23,14 @@ focus and grows to the Plex app's own poster size when focus moves up into it.
 - Density decision: in-group gap 14dp (header to posters, poster to poster), group gap 28dp (posters to
   dock band), tile gap 27dp.
 
-## Layout (16:9, 5 columns)
+## Layout (16:9, 4 columns)
 
 | Element | Value |
 |---|---|
-| Columns | 5 (`config.xml columns`); 4 would re-centre a 736dp band via grid side padding |
-| Tile | 143x80 at 5 columns (design 150x84, `AppAdapter.DESIGN_W_DP/H_DP`); 16:9 |
+| Columns | 4 (`config.xml columns`), the dock's four apps with no slot filled from the grid; the 736dp band is centred by the grid's side padding (5 columns fill 848dp edge to edge) |
+| Tile | 150x84 at 4 columns (`AppAdapter.DESIGN_W_DP/H_DP`; 143x80 at 5); 16:9 |
 | Tile gap | 27dp (cell = tile x 1.1 + 12dp) |
-| Band width | 848dp edge to edge, same outer margin as the clock (56dp grid padding + 4) |
+| Band width | 736dp at 4 columns, centred (848dp edge to edge at 5, on the clock's margin) |
 | Dock bottom | 24dp of band above the screen's bottom edge (`dockNameRoom` 44dp: the dock's unused name room is let below the bottom room; `BOTTOM_ROOM_DP` stays 30 for themes) |
 | Dock with fewer apps than slots | tiles translate by half the free slots' width (`AppAdapter.dockShift`); band and glass follow; the footer row never shifts |
 | Shelf inset | hero name, Plex row header and posters, details block and the Recently Added caption all start 12dp inside the band's edge (`alignShelf`) |
