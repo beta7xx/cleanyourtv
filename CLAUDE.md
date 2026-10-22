@@ -22,7 +22,7 @@ Launcher (needs JDK 17, Android SDK platform 34, build-tools 34.0.0; run from `l
 ```
 
 Release is R8-minified and signed with the debug key, so it installs over a debug build. CI fails a
-release APK over the size gate in `.github/workflows/ci.yml` (500 KB on this fork, 480 KB upstream); the
+release APK over the size gate in `.github/workflows/ci.yml` (500 KB on this fork, 480 KB upstream; this fork's release is about 497 KB); the
 launcher targets 1 GB TVs and sits within a few KB of the gate, so check the size after any addition:
 `stat -c %s app/build/outputs/apk/release/app-release.apk`.
 
@@ -83,12 +83,20 @@ D-pad navigation, nothing TV-specific in code.
   Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). Server URL is in
   config.xml, the token in `Settings.Global plex_token` on the TV, never in the repo. The device needs
   Plex's Picture-in-Picture app-op denied so Home pauses playback (noted in the KD-49X8500F example).
+- **Inputs (this fork).** The Inputs menu shows a connection dot per HDMI port, and `updateInputTiles` adds
+  one pill under the gear per input with something plugged in (Down from the gear walks them). The state
+  comes from `TvInputManager`, except on TVs whose ports all claim connected (`hdmiStateBogus`): there a
+  CEC device on the port counts, and on Sony BRAVIA the real cable state is read from Sony's exported
+  provider `content://com.sony.dtv.tvinput.external.provider/sony_external_input` (`connect_state`),
+  watched with a content observer. Found by reading Sony's ExternalInputServices APK; see
+  `sonyConnectStates` in MainActivity.
 - **Services.** `InputKeyService` and `HomeKeyService` are accessibility services that remap remote
   buttons the stock launcher used to answer; `ClockDream` is the screensaver; `Cards` implements the
   module-card contract in `docs/specs/card.md` (apps declaring their own tile, approved per signing key).
 
 Design values for the home screen (tile sizes, gaps, type scale, Plex row geometry) are recorded in
-`.interface-design/system.md`; keep changes consistent with it or update it.
+`.interface-design/system.md`; keep changes consistent with it or update it. Vendor APKs pulled from the
+TV for reading (Plex, Sony) go in the scratchpad, never in the repo.
 
 ## Syncing this fork with upstream
 
