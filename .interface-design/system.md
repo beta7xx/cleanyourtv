@@ -1,4 +1,4 @@
-# Clean Your TV launcher — home screen design system (branch `local`)
+# Clean Your TV launcher — home screen design system (branch `sony-kd-49x8500f`)
 
 Sony KD-49X8500F, 1920x1080, density 320 (2 px per dp). Values below are dp unless marked. Measured on the
 TV from screenshots in `shots/`, not from mock-ups. The user watches from about 3 m with a D-pad remote.

@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Debloat Android TVs over ADB (no root, nothing uninstalled, every step reversible) and replace the stock
 home with a small native launcher. Three parts: `PROMPT.md` (what end users paste into an assistant),
 `examples/<brand>-<model>/debloat.txt` lists with `tools/` scripts that apply and undo them, and the
-launcher in `launcher/`. Branch `local` is this fork's working branch; `upstream` is Gathin23/cleanyourtv.
-Branch `local` also carries the Plex Continue Watching row, which upstream does not have.
+launcher in `launcher/`. Branch `sony-kd-49x8500f` is this fork's working branch; `upstream` is Gathin23/cleanyourtv.
+Branch `sony-kd-49x8500f` also carries the Plex Continue Watching row, which upstream does not have.
 
 ## Commands
 
@@ -102,12 +102,12 @@ TV for reading (Plex, Sony) go in the scratchpad, never in the repo.
 
 ```bash
 git fetch upstream main && git branch -f main upstream/main && git push origin main   # fork's main mirrors upstream
-git checkout local && git merge main                                                # bring upstream into local
+git checkout sony-kd-49x8500f && git merge main                                                # bring upstream into local
 ```
 
 Expect conflicts in `MainActivity.java`, `config.xml` and the two `strings.xml` files, where the Plex row
 lives; keep both sides and keep this fork's `reorder_button`/`ambient_glow` values. GitHub's web merge
-cannot resolve these, so merge locally and push `local`. The fork's design and plan documents are in
+cannot resolve these, so merge locally and push `sony-kd-49x8500f`. The fork's design and plan documents are in
 `docs/superpowers/specs/` and `docs/superpowers/plans/`; `shots/` holds TV screenshots and is not committed.
 
 ## Conventions worth knowing

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Release APK under 450,560 bytes (`./gradlew assembleRelease --offline`, file `app/build/outputs/apk/release/app-release.apk`).
-- Branch `local` only; commit after every task; never push without being asked.
+- Branch `sony-kd-49x8500f` only; commit after every task; never push without being asked.
 - No network request while Home is paused except the one 20 s resend check.
 - Posters 10 at most, 176x264 RGB_565; one 960x540 RGB_565 backdrop.
 - Thai strings in `values-th/strings.xml` for every new user-visible string.
