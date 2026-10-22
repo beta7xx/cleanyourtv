@@ -138,10 +138,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private PlexContinue plexRow;
     /** The Continue Watching row has focus: posters at the Plex app's size, the dock slid down, details and art up. */
     private boolean plexLarge;
-    private View plexScrim, plexDetails;
-    private TextView plexTitle, plexEpisode, plexMeta, plexSummary, plexCast;
+    private View plexScrim;
     private final PlexContinue.Host plexHost = new PlexContinue.Host() {
-        @Override public void onItemFocused(PlexContinue.Item item) { enterPlexLarge(); showPlexDetails(item); }
+        @Override public void onItemFocused(PlexContinue.Item item) { enterPlexLarge(); if (plex != null) plex.showArt(item.art); }
         @Override public void onItemsChanged() { refreshPlexRow(); }
         @Override public void onRowUp() { leavePlexLarge(); plexRow.setShown(false); firstTopButton().requestFocus(); }
         @Override public void onRowDown() { leavePlexLarge(); focusTile(plexDockPosition()); }
@@ -407,12 +406,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         }
         plexScrim = findViewById(R.id.plexScrim);
-        plexDetails = findViewById(R.id.plexDetails);
-        plexTitle = findViewById(R.id.plexTitle);
-        plexEpisode = findViewById(R.id.plexEpisode);
-        plexMeta = findViewById(R.id.plexMeta);
-        plexSummary = findViewById(R.id.plexSummary);
-        plexCast = findViewById(R.id.plexCast);
         sky = findViewById(R.id.sky);
         sky.setIntensity(cfg.skyIntensity);
         glass = findViewById(R.id.glass);
@@ -1597,8 +1590,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // launcher lays out left to right only (no supportsRtl).
             ((ViewGroup.MarginLayoutParams) hero.getLayoutParams()).leftMargin = bandLeft + inset;
             hero.requestLayout();
-            ((ViewGroup.MarginLayoutParams) plexDetails.getLayoutParams()).leftMargin = bandLeft + inset;
-            plexDetails.requestLayout();
             if (plexRow != null) plexRow.setEdge(bandLeft + inset);
             if (plex != null) plex.setEndMargin(root.getWidth() - bandRight + inset);
         });
@@ -1622,11 +1613,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (plexLarge) {
             // The hub emptied under the focused row (finished elsewhere): back to the Plex tile, nothing stranded.
             if (!plexRow.hasItems()) { leavePlexLarge(); focusTile(plexDockPosition()); return; }
-            // A tab switch changes the row's height (captions under Recently Added posters): keep its bottom put.
-            float rowY = root.getHeight() - 24 * density - plexRow.height();
-            plexRow.view().setY(rowY);
-            // The details block keeps 24dp above the row: a Recently Added tab's captions make the row taller.
-            plexDetails.setTranslationY(Math.min(0f, rowY - 24 * density - plexDetails.getBottom()));
             return;
         }
         refitGlass(true);   // runs the dock tile's focus again, which places or hides the row
@@ -1652,6 +1638,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         plexRow.setLarge(true);
         plexRow.setShown(true);
         View v = plexRow.view();
+        // The row keeps the captions' room on every tab (PlexContinue.captionRoom), so the tab strip never moves when
+        // the tab changes; its bottom sits 24dp above the screen's edge.
         float rowY = root.getHeight() - 24 * density - plexRow.height();
         // The dock is parked at the grid's top padding while a dock tile has focus: that is the band's top.
         Rect g = tileRect;
@@ -1659,23 +1647,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         root.offsetDescendantRectToMyCoords(grid, g);
         float dy = root.getHeight() - 16 * density - (g.top + grid.getPaddingTop());
         plexScrim.setVisibility(View.VISIBLE);
-        plexDetails.setVisibility(View.VISIBLE);
-        plexDetails.setTranslationY(0f);
         grid.animate().cancel();
         if (!animations || reducedMotion) {
             v.setY(rowY);
             grid.setTranslationY(dy);
             plexScrim.setAlpha(1f);
-            plexDetails.setAlpha(1f);
             return;
         }
         v.animate().y(rowY).setDuration(260).start();
         grid.animate().translationY(dy).setDuration(260).start();
         plexScrim.animate().alpha(1f).setDuration(260).start();
-        plexDetails.animate().alpha(1f).setDuration(260).start();
     }
 
-    /** Back to the compact row: the dock returns, the details and scrim go, the slideshow resumes. */
+    /** Back to the compact row: the dock returns, the scrim goes, the slideshow resumes. */
     private void leavePlexLarge() {
         if (!plexLarge) return;
         plexLarge = false;
@@ -1683,32 +1667,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (plex != null) plex.resumeSlideshow();
         grid.animate().cancel();
         plexScrim.animate().cancel();
-        plexDetails.animate().cancel();
         if (!animations || reducedMotion) {
             grid.setTranslationY(0f);
             plexScrim.setAlpha(0f);
             plexScrim.setVisibility(View.GONE);
-            plexDetails.setAlpha(0f);
-            plexDetails.setVisibility(View.GONE);
             return;
         }
         grid.animate().translationY(0f).setDuration(260).start();
         plexScrim.animate().alpha(0f).setDuration(260).withEndAction(() -> { if (!plexLarge) plexScrim.setVisibility(View.GONE); }).start();
-        plexDetails.animate().alpha(0f).setDuration(260).withEndAction(() -> { if (!plexLarge) plexDetails.setVisibility(View.GONE); }).start();
-    }
-
-    private void showPlexDetails(PlexContinue.Item item) {
-        plexTitle.setText(item.show);
-        boolean episode = !item.title.equals(item.show);
-        plexEpisode.setText(item.title);
-        plexEpisode.setVisibility(episode ? View.VISIBLE : View.GONE);
-        plexMeta.setText(item.meta);
-        plexMeta.setVisibility(item.meta.isEmpty() ? View.GONE : View.VISIBLE);
-        plexSummary.setText(item.summary);
-        plexSummary.setVisibility(item.summary.isEmpty() ? View.GONE : View.VISIBLE);
-        plexCast.setText(item.cast);
-        plexCast.setVisibility(item.cast.isEmpty() ? View.GONE : View.VISIBLE);
-        if (plex != null) plex.showArt(item.art);
     }
 
     // ---- top shelf -------------------------------------------------------------------------------

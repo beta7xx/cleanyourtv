@@ -176,7 +176,7 @@ final class PlexContinue {
         View title = row.getChildAt(0);
         if (title.getMeasuredHeight() == 0)
             title.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        return title.getMeasuredHeight() + dp(12) + posterH() + (captions() ? dp(CAPTION_DP) : 0);
+        return title.getMeasuredHeight() + dp(12) + posterH() + (captionRoom() ? dp(CAPTION_DP) : 0);
     }
 
     /** Compact (above the dock) or the Plex app's size (row focused). Applies to every poster at once. */
@@ -503,9 +503,10 @@ final class PlexContinue {
         }
     }
 
-    /** Caption lines under a poster, Plex's three: 14sp white, 12sp and 12sp dim. Only in the Recently Added tabs. */
-    static final int CAPTION_DP = 58;
-    private boolean captions() { return tab != 0; }
+    /** Caption lines under a poster, Plex's three: 14sp white, 12sp and 12sp dim. In the large row, on every tab. */
+    static final int CAPTION_DP = 62;
+    private boolean captions() { return large; }
+    private boolean captionRoom() { return large; }
 
     private final class Adapter extends RecyclerView.Adapter<Holder> {
         @Override public int getItemCount() { return items.size(); }
@@ -526,7 +527,7 @@ final class PlexContinue {
         void size(Holder h) {
             ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) h.itemView.getLayoutParams();
             lp.width = posterW();
-            lp.height = posterH() + (captions() ? dp(CAPTION_DP) : 0);
+            lp.height = posterH() + (captionRoom() ? dp(CAPTION_DP) : 0);
             lp.setMarginEnd(dp(GAP));
             h.itemView.setLayoutParams(lp);
             h.card.getLayoutParams().height = posterH();
@@ -546,7 +547,7 @@ final class PlexContinue {
             FrameLayout card = new FrameLayout(ctx);
             card.setFocusable(true);
             item.addView(card, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, posterH()));
-            TextView show = caption(14, Color.WHITE, dp(8)), title = caption(12, 0x99FFFFFF, dp(2)), episode = caption(12, 0x99FFFFFF, dp(2));
+            TextView show = caption(14, Color.WHITE, dp(6)), title = caption(12, 0x99FFFFFF, dp(1)), episode = caption(12, 0x99FFFFFF, dp(1));
             item.addView(show); item.addView(title); item.addView(episode);
             ImageView image = new ImageView(ctx);
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);

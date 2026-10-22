@@ -32,34 +32,6 @@
         android:alpha="0"
         android:visibility="gone"
         android:importantForAccessibility="no" />
-    <!-- The focused Continue Watching item, laid out as the Plex app's own home: title, episode, meta, summary, cast. -->
-    <LinearLayout
-        android:id="@+id/plexDetails"
-        android:layout_width="440dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="63dp"
-        android:layout_marginTop="118dp"
-        android:orientation="vertical"
-        android:alpha="0"
-        android:visibility="gone"
-        android:focusable="false"
-        android:importantForAccessibility="no">
-        <TextView android:id="@+id/plexTitle" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:singleLine="true" android:ellipsize="end" android:textColor="#FFFFFFFF" android:textSize="28sp"
-            android:fontFamily="@font/outfit_medium" android:includeFontPadding="false" />
-        <TextView android:id="@+id/plexEpisode" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp" android:singleLine="true" android:ellipsize="end" android:textColor="#FFFFFFFF"
-            android:textSize="16sp" android:fontFamily="@font/outfit_medium" />
-        <TextView android:id="@+id/plexMeta" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp" android:singleLine="true" android:textColor="#B3FFFFFF" android:textSize="12sp"
-            android:fontFamily="@font/outfit_regular" android:letterSpacing="0.02" />
-        <TextView android:id="@+id/plexSummary" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="14dp" android:maxLines="2" android:ellipsize="end" android:textColor="#D9FFFFFF"
-            android:textSize="13sp" android:lineSpacingExtra="3dp" android:fontFamily="@font/outfit_regular" />
-        <TextView android:id="@+id/plexCast" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="10dp" android:singleLine="true" android:ellipsize="end" android:textColor="#99FFFFFF"
-            android:textSize="12sp" android:fontFamily="@font/outfit_regular" />
-    </LinearLayout>
     <!-- Ambient glow in the colour of the focused dock app. -->
     <View
         android:id="@+id/ambient"
