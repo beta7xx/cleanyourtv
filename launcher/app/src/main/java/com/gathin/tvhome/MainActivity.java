@@ -35,6 +35,8 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.database.ContentObserver;
+import android.database.Cursor;
 import android.net.Uri;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -740,6 +742,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         if (tim != null) tim.registerCallback(inputCallback, handler);
+        getContentResolver().registerContentObserver(SONY_INPUTS, true, sonyInputsObserver);
         if (cm != null) {
             cm.registerDefaultNetworkCallback(networkCallback);
             cm.registerNetworkCallback(new NetworkRequest.Builder()
@@ -1111,6 +1114,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         if (tim != null) tim.unregisterCallback(inputCallback);
+        getContentResolver().unregisterContentObserver(sonyInputsObserver);
         if (cm != null) {
             cm.unregisterNetworkCallback(networkCallback);
             cm.unregisterNetworkCallback(vpnCallback);
@@ -2663,6 +2667,34 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private LinearLayout inputTiles;
 
     /**
+     * Sony BRAVIA (MediaTek, Android 9): TvInputManager says every HDMI port is connected and the HAL reports no
+     * cable state, but Sony's ExternalInputServices keeps the real hotplug state in this exported table
+     * (connect_state 1 = a cable with a powered device on the port). Empty on every other TV.
+     */
+    private static final Uri SONY_INPUTS = Uri.parse("content://com.sony.dtv.tvinput.external.provider/sony_external_input");
+
+    private Map<String, Integer> sonyConnectStates() {
+        Map<String, Integer> out = new HashMap<>();
+        try (Cursor c = getContentResolver().query(SONY_INPUTS, new String[]{"input_id", "connect_state"}, null, null, null)) {
+            while (c != null && c.moveToNext()) {
+                out.put(c.getString(0), c.getInt(1) == 1 ? TvInputManager.INPUT_STATE_CONNECTED : TvInputManager.INPUT_STATE_DISCONNECTED);
+            }
+        } catch (Exception ignored) { }   // no such provider, or a firmware that refuses the query
+        return out;
+    }
+
+    private final ContentObserver sonyInputsObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+        @Override public void onChange(boolean selfChange) { updateInputsButton(); }
+    };
+
+    /** The input's connection state: the TV's own when it is trustworthy, else Sony's table, else unknown (-1). */
+    private int inputState(TvInputManager tim, String id, boolean bogus, Map<String, Integer> sony) {
+        if (!bogus) return tim.getInputState(id);
+        Integer s = sony.get(id);
+        return s == null ? -1 : s;
+    }
+
+    /**
      * One pill under the gear per input with something on it, so a plugged-in console or box is one click away
      * without opening the Inputs menu. A CEC device on a port counts as plugged in; a bare HDMI port counts only
      * when the TV's port states can be trusted (see hdmiStateBogus). Up/Down walk the pills between the gear and
@@ -2680,12 +2712,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             for (TvInputInfo info : inputs)
                 if (info.isPassthroughInput() && info.getParentId() != null && ids.contains(info.getParentId())) portsWithDevice.add(info.getParentId());
             boolean bogus = hdmiStateBogus(tim, inputs, ids);
+            Map<String, Integer> sony = bogus ? sonyConnectStates() : Collections.emptyMap();
             for (TvInputInfo info : inputs) {
                 if (!info.isPassthroughInput() || info.isHidden(this) || info.getType() != TvInputInfo.TYPE_HDMI) continue;
                 if (Integer.valueOf(-1).equals(mappedSource(info.getId()))) continue;
                 boolean cec = info.getParentId() != null && ids.contains(info.getParentId());
-                if (!cec && (bogus || portsWithDevice.contains(info.getId())
-                        || tim.getInputState(info.getId()) != TvInputManager.INPUT_STATE_CONNECTED)) continue;
+                if (!cec && (portsWithDevice.contains(info.getId())
+                        || inputState(tim, info.getId(), bogus, sony) != TvInputManager.INPUT_STATE_CONNECTED)) continue;
                 CharSequence name = info.loadCustomLabel(this);
                 if (name == null || name.length() == 0) name = info.loadLabel(this);
                 String label = name == null ? info.getId() : name.toString();
@@ -2918,6 +2951,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 onPort.add(info);
             }
             boolean hdmiStateBogus = hdmiStateBogus(tim, inputs, inputIds);
+            Map<String, Integer> sony = hdmiStateBogus ? sonyConnectStates() : Collections.emptyMap();
             for (TvInputInfo info : inputs) {
                 if (info.getType() == TvInputInfo.TYPE_TUNER
                         && (info.getServiceInfo().applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0
@@ -2975,7 +3009,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 final String id = info.getId();
                 // Analog AV jacks have no hotplug detection, and some TVs report them as always connected
                 // (TCL Smart TV Pro G03 says "Connected" with nothing plugged in), so AV rows show no state.
-                int state = !hdmi || hdmiStateBogus ? -1 : tim.getInputState(id);
+                int state = !hdmi ? -1 : inputState(tim, id, hdmiStateBogus, sony);
                 addInputRow(rows, popup, hdmi ? R.drawable.ic_input : R.drawable.ic_av, label, state,
                         () -> openInput(id));
             }
