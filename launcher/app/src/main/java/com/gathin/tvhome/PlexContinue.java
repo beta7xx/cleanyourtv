@@ -188,6 +188,9 @@ final class PlexContinue {
     void setLarge(boolean large) {
         if (this.large == large) return;
         this.large = large;
+        // Shrinking with focus still inside: RecyclerView would hand it to a neighbour on rebind. The host has
+        // already chosen where focus goes; drop ours so the rebind leaves it there.
+        if (!large && row.hasFocus()) row.clearFocus();
         if (!large && tab != 0) selectTab(0);   // the compact row above the dock is always Continue Watching
         // Rebind rather than resize the attached children only: posters parked in the view cache keep their
         // size otherwise and come back wrong. Stable ids keep the focused poster focused through it.

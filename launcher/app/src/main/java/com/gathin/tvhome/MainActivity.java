@@ -143,9 +143,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         @Override public void onItemFocused(PlexContinue.Item item) { enterPlexLarge(); if (plex != null) plex.showArt(item.art); }
         @Override public void onItemsChanged() { refreshPlexRow(); }
         @Override public void onFocusMoved(View v) { if (v != null) glassTo(v); }
-        // The pill takes focus first: shrinking and hiding the row rebinds its posters, and RecyclerView's focus
-        // recovery would otherwise hand focus to the nearest dock tile.
-        @Override public void onRowUp() { firstTopButton().requestFocus(); leavePlexLarge(); plexRow.setShown(false); }
+        // The first pill (Inputs when shown) takes focus first; the row's shrink then rebinds posters that no longer
+        // hold focus, so RecyclerView's focus recovery has nothing to recover and the glass stays on the pill.
+        @Override public void onRowUp() {
+            View pill = btnInputs.getVisibility() == View.VISIBLE ? btnInputs : firstTopButton();
+            pill.requestFocus();
+            leavePlexLarge();
+            plexRow.setShown(false);
+            pill.post(() -> { if (pill.isFocused()) glassTo(pill); });
+        }
         @Override public void onRowDown() { leavePlexLarge(); focusTile(plexDockPosition()); }
     };
     /** The top shelf: heroName, plus the cinematic shelf's "Last opened" line and dock position dots. */
@@ -1682,7 +1688,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             plexScrim.setAlpha(1f);
             return;
         }
-        v.animate().y(rowY).setDuration(260).start();
+        // The glass was placed from the focus event, while the row was still up at its compact height: follow it down.
+        v.animate().y(rowY).setDuration(260).withEndAction(() -> { View f = v.findFocus(); if (f != null) glassTo(f); }).start();
         grid.animate().translationY(dy).setDuration(260).start();
         plexScrim.animate().alpha(1f).setDuration(260).start();
     }
