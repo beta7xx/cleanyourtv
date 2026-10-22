@@ -1580,11 +1580,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         float[] t = (float[]) v.getTag(R.id.glass_target);
         if (t == null) return;
         if (v.getWidth() == 0) { v.post(() -> { if (v.isFocused()) glassTo(v); }); return; }
+        // Window coordinates: they include every ancestor's translation (the Plex row is placed with setY) and
+        // ignore the view's own scroll. offsetDescendantRectToMyCoords subtracts that scroll, and a single-line
+        // ellipsised TextView (the Wi-Fi pill) carries a scrollX in the hundreds of thousands, which put the glass
+        // far off screen.
+        int[] vw = new int[2], rw = new int[2];
+        v.getLocationInWindow(vw);
+        root.getLocationInWindow(rw);
         Rect r = tileRect;
-        r.set(0, 0, v.getWidth(), v.getHeight());
-        root.offsetDescendantRectToMyCoords(v, r);
-        // Layout positions only: add the translations on the way up (the Plex row is placed with setY).
-        for (View p = v; p != null && p != root; p = (View) p.getParent()) r.offset(Math.round(p.getTranslationX()), Math.round(p.getTranslationY()));
+        r.set(vw[0] - rw[0], vw[1] - rw[1], vw[0] - rw[0] + v.getWidth(), vw[1] - rw[1] + v.getHeight());
         if (glassAccent != 0) { glassAccent = 0; glass.setAccent(festive ? festival.accentColor() : 0); }
         placeGlass(r, t[0], t[1], 0f);
     }
