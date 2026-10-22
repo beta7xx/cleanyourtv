@@ -19,13 +19,12 @@ public class PlexContinueTest {
     }
 
     @Test
-    public void parsesPosterArtMetaAndCast() throws Exception {
+    public void parsesPosterArtAndMeta() throws Exception {
         List<PlexContinue.Item> items = parse(
                 "<Video type=\"episode\" key=\"/library/metadata/137830\" title=\"ตอนที่ 2\" grandparentTitle=\"ปลดหน้ากาก\""
                 + " parentIndex=\"1\" index=\"2\" originallyAvailableAt=\"2026-10-16\" duration=\"3010240\" contentRating=\"TV-MA\""
-                + " summary=\"A-Chou agrees to marry Lu Zhuo.\" thumb=\"/library/metadata/137830/thumb/1\""
+                + " thumb=\"/library/metadata/137830/thumb/1\""
                 + " grandparentThumb=\"/library/metadata/137827/thumb/2\" art=\"/library/metadata/137827/art/3\" viewOffset=\"2248000\">"
-                + "<Role tag=\"Tian Xiwei\"/><Role tag=\"Yan An\"/><Role tag=\"Pan Junya\"/><Role tag=\"Fourth Person\"/>"
                 + "</Video>");
         assertEquals(1, items.size());
         PlexContinue.Item it = items.get(0);
@@ -37,8 +36,6 @@ public class PlexContinueTest {
         assertEquals("S1 \u00B7 E2", it.episode);
         assertFalse(PlexContinue.displayDate("2026-10-16").isEmpty());
         assertEquals("not-a-date", PlexContinue.displayDate("not-a-date"));
-        assertEquals("A-Chou agrees to marry Lu Zhuo.", it.summary);
-        assertEquals("Tian Xiwei, Yan An, Pan Junya", it.cast);
         assertEquals(74, it.progress);
         assertEquals("137830", it.ratingKey());
     }
@@ -51,7 +48,6 @@ public class PlexContinueTest {
         assertEquals("Movie", items.get(0).show);
         assertEquals("/library/metadata/2/thumb/9", items.get(0).poster);
         assertEquals("2024 · 90m", items.get(0).meta);
-        assertEquals("", items.get(0).cast);
     }
 
     @Test

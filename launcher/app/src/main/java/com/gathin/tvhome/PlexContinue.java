@@ -75,11 +75,11 @@ final class PlexContinue {
     static final int SMALL_W = 96, SMALL_H = 144, LARGE_W = 122, LARGE_H = 182, GAP = 14, EDGE = 63;
 
     static final class Item {
-        final String key, show, title, poster, art, summary, cast, meta, episode;   // episode: "S1 · E44", "" for a movie
+        final String key, show, title, poster, art, meta, episode;   // episode: "S1 · E44", "" for a movie
         final int progress;   // 0..100, viewOffset / duration
-        Item(String key, String show, String title, String poster, String art, String summary, String cast, String meta, String episode, int progress) {
+        Item(String key, String show, String title, String poster, String art, String meta, String episode, int progress) {
             this.key = key; this.show = show; this.title = title; this.poster = poster; this.art = art;
-            this.summary = summary; this.cast = cast; this.meta = meta; this.episode = episode; this.progress = progress;
+            this.meta = meta; this.episode = episode; this.progress = progress;
         }
         /** "/library/metadata/137585" -> "137585", as the sessions list names it. */
         String ratingKey() { return key.substring(key.lastIndexOf('/') + 1); }
@@ -690,29 +690,22 @@ final class PlexContinue {
 
     /**
      * What the Plex app shows per item: the series poster (the movie's own for movies), the backdrop art, a
-     * meta line ("E2 · 2026-10-16 · 50m · TV-MA", or "2024 · 90m" for a movie), the summary and three cast
-     * names. Items without any poster are skipped.
+     * meta line ("E2 · 2026-10-16 · 50m · TV-MA", or "2024 · 90m" for a movie) and the "S1 · E2" caption line.
+     * Items without any poster are skipped.
      */
     static List<Item> parse(InputStream in) throws Exception {
         List<Item> out = new ArrayList<>();
         SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
-            String key, show, title, poster, art, summary, meta, episode;
+            String key, show, title, poster, art, meta, episode;
             int progress;
-            List<String> cast;
 
             @Override public void startElement(String uri, String local, String tag, Attributes a) {
-                if ("Role".equals(tag) && cast != null) {
-                    if (cast.size() < 3 && a.getValue("tag") != null) cast.add(a.getValue("tag"));
-                    return;
-                }
                 if (!"Video".equals(tag)) return;
                 key = a.getValue("key"); title = a.getValue("title");
                 poster = a.getValue("grandparentThumb") != null ? a.getValue("grandparentThumb") : a.getValue("thumb");
                 if (key == null || title == null || poster == null) { key = null; return; }
                 show = a.getValue("grandparentTitle") != null ? a.getValue("grandparentTitle") : title;
                 art = a.getValue("art") != null ? a.getValue("art") : a.getValue("grandparentArt");
-                summary = a.getValue("summary") == null ? "" : a.getValue("summary");
-                cast = new ArrayList<>();
                 List<String> parts = new ArrayList<>();
                 episode = "";
                 if (a.getValue("grandparentTitle") != null) {
@@ -735,8 +728,8 @@ final class PlexContinue {
 
             @Override public void endElement(String uri, String local, String tag) {
                 if (!"Video".equals(tag) || key == null) return;
-                out.add(new Item(key, show, title, poster, art, summary, String.join(", ", cast), meta, episode, progress));
-                key = null; cast = null;
+                out.add(new Item(key, show, title, poster, art, meta, episode, progress));
+                key = null;
             }
         });
         return out;
