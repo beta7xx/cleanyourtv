@@ -44,24 +44,23 @@ Three visible tiers; weight and opacity do the rest.
 |---|---|
 | Clock | 52sp light |
 | Hero app name | 40sp light, white (was 48 before the smaller tiles) |
-| Plex details title | 28sp medium, white |
-| Row header "Continue Watching" | 20sp medium, white, 14dp above the posters |
-| Plex episode title | 16sp medium, white |
+| Plex hub tabs | 20sp medium; current tab white, others `#80FFFFFF`; 14dp above the posters |
+| Poster caption: series | 14sp medium, white, 6dp under the poster |
+| Poster caption: episode title, "S1 · E4" | 12sp regular, `#99FFFFFF` |
 | Recently Added caption | 16sp regular, `#B3FFFFFF`, right-aligned to the band |
-| Summary | 13sp regular, `#D9FFFFFF`, 2 lines, 440dp wide, line spacing +3dp |
-| Meta line, cast | 12sp regular, `#B3FFFFFF` / `#99FFFFFF` |
 
-Details block line gaps: title → episode 8, → meta 8, → summary 14, → cast 10.
+## Plex row (`PlexContinue`)
 
-## Plex Continue Watching row (`PlexContinue`, `plexDetails` in `activity_main.xml`)
-
-- Posters 2:3, corner radius 6dp, gap 14dp, white 1.5dp stroke + scale 1.04 on focus.
-- Compact (Plex dock tile focused): 96x144, row bottom 36dp above the dock tiles (28dp air to the band).
-- Large (Up into the row): 122x182 (Plex's own size), row bottom 24dp above the screen edge, grid slides
-  down so 16dp of the dock band peeks, focused item's art at full opacity under `plex_scrim`
-  (`#E6000000` → `#66000000`, 45°), details block top-left at 118dp from the top.
+- Posters 2:3, corner radius 6dp, gap 14dp, scale 1.04 on focus; the glass is the focus (no stroke).
+- Compact (Plex dock tile focused): header "ดูต่อ" only, 96x144 posters, no captions, row bottom 36dp above
+  the dock tiles (28dp air to the band).
+- Large (Up into the row): a tab strip (Continue Watching, then "เพิ่มล่าสุดใน <library>" per `plex_sections`
+  entry, from Plex's `/hubs/promoted`), 122x182 posters (Plex's own size) with a 62dp caption area under
+  each (series / episode title / "S1 · E4", as Plex), the same height on every tab so the strip never
+  moves; row bottom 24dp above the screen edge; the grid slides down so 16dp of the dock band peeks; the
+  focused item's art at full opacity under `plex_scrim` (`#E6000000` → `#66000000`, 45°). No details
+  block above the row.
 - Progress bar: amber `#E5A00D`, 2dp high, inset 8dp, over a `#66000000` track; hidden at 0 %.
-- Meta line: `E3 · 16 ต.ค. 2026 · 54m · TV-MA` — date in the TV's locale (medium style), as Plex does.
 - Motion: 260ms for the grow/slide, 160ms fades; snap when animations are off or reduced motion is on;
   the poster list has no item animator (a size switch would otherwise show two sizes).
 
@@ -72,6 +71,9 @@ Details block line gaps: title → episode 8, → meta 8, → summary 14, → ca
   early return.
 - Down from the top bar goes to the dock tile, never into the row; Up from a non-Plex dock tile goes to
   the top bar.
+- Up from a poster goes to the current tab; Left/Right on the tabs switch hubs and reload; Down returns to
+  the posters; Up from a tab leaves to the first top pill (Inputs). Back anywhere in the row returns to the
+  Plex dock tile.
 - Opening an item sends Plex's own `plex://watch/video?uri=server://…` link once, resends once after 20 s
   only if this TV has no video session at all; Home ends the TV's server session with the stopped
   timeline report. Plex's Picture-in-Picture app-op is denied on this TV so Home pauses playback.
@@ -79,4 +81,4 @@ Details block line gaps: title → episode 8, → meta 8, → summary 14, → ca
 ## Budget
 
 Release APK gate on this fork: 500 KB (`.github/workflows/ci.yml`, 512,000 bytes); upstream gates at 480.
-Current release: about 495 KB.
+Current release: about 499 KB.

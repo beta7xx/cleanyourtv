@@ -22,7 +22,7 @@ Launcher (needs JDK 17, Android SDK platform 34, build-tools 34.0.0; run from `l
 ```
 
 Release is R8-minified and signed with the debug key, so it installs over a debug build. CI fails a
-release APK over the size gate in `.github/workflows/ci.yml` (500 KB on this fork, 480 KB upstream; this fork's release is about 497 KB); the
+release APK over the size gate in `.github/workflows/ci.yml` (500 KB on this fork, 480 KB upstream; this fork's release is about 499 KB); the
 launcher targets 1 GB TVs and sits within a few KB of the gate, so check the size after any addition:
 `stat -c %s app/build/outputs/apk/release/app-release.apk`.
 
@@ -78,11 +78,18 @@ D-pad navigation, nothing TV-specific in code.
 - **Plex (this fork).** `PlexBackdrop` shows the server's Recently Added art as a dimmed slideshow.
   `PlexContinue` is the Continue Watching row: it owns the data (hub fetch, SAX parsing into `Item`,
   opening via Plex's own `plex://watch/video?uri=server://...` link with one resend, ending this TV's
-  server sessions on Home via the stopped timeline report) and the poster row view in two sizes.
-  MainActivity decides when it shows: only while the Plex dock tile has focus, replacing the hero name;
-  Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). Server URL is in
+  server sessions on Home via the stopped timeline report) and the poster row view in two sizes with a
+  tab strip of hubs (Continue Watching plus a Recently Added tab per `plex_sections` library, from Plex's
+  own `/hubs/promoted`). MainActivity decides when it shows: only while the Plex dock tile has focus,
+  replacing the hero name; Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). Server URL is in
   config.xml, the token in `Settings.Global plex_token` on the TV, never in the repo. The device needs
   Plex's Picture-in-Picture app-op denied so Home pauses playback (noted in the KD-49X8500F example).
+- **Focus (this fork).** One floating `GlassView` marks every focus on Home. Tiles place it from
+  `onTileFocused`; any other focusable view opts in with `MainActivity.glassTarget(view, scale, radiusPx)`
+  and the global focus listener calls `glassTo`, which reads the view's window position (not
+  `offsetDescendantRectToMyCoords`, which subtracts a TextView's internal scroll) and undoes its current
+  focus scale. Rows inside popup windows (Inputs menu, module cards) draw the same glass themselves via
+  `input_row_bg`. No view keeps a white fill or dark text on focus.
 - **Inputs (this fork).** The Inputs menu shows a connection dot per HDMI port, and `updateInputTiles` adds
   one pill under the gear per input with something plugged in (Down from the gear walks them). The state
   comes from `TvInputManager`, except on TVs whose ports all claim connected (`hdmiStateBogus`): there a
