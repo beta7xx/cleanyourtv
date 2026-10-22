@@ -34,6 +34,7 @@ public class PlexContinueTest {
         assertEquals("/library/metadata/137827/thumb/2", it.poster);
         assertEquals("/library/metadata/137827/art/3", it.art);
         assertEquals("E2 · " + PlexContinue.displayDate("2026-10-16") + " · 50m · TV-MA", it.meta);
+        assertEquals("S1 \u00B7 E2", it.episode);
         assertFalse(PlexContinue.displayDate("2026-10-16").isEmpty());
         assertEquals("not-a-date", PlexContinue.displayDate("not-a-date"));
         assertEquals("A-Chou agrees to marry Lu Zhuo.", it.summary);
@@ -109,15 +110,11 @@ public class PlexContinueTest {
     }
 
     @Test
-    public void recentlyAddedCollapsesEpisodesToTheirShow() throws Exception {
-        String xml = "<MediaContainer><Hub>"
-                + "<Video key=\"/library/metadata/1\" title=\"E2\" grandparentTitle=\"Show\" grandparentThumb=\"/s\"/>"
-                + "<Video key=\"/library/metadata/2\" title=\"E1\" grandparentTitle=\"Show\" grandparentThumb=\"/s\"/>"
-                + "<Video key=\"/library/metadata/3\" title=\"Movie\" thumb=\"/m\"/>"
-                + "</Hub></MediaContainer>";
-        List<PlexContinue.Item> items = PlexContinue.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)), true);
-        assertEquals(2, items.size());
-        assertEquals("E2", items.get(0).title);   // the newest episode stands for the show
-        assertEquals(3, PlexContinue.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)), false).size());
+    public void episodeLineIsSeasonAndEpisodeLikePlex() throws Exception {
+        List<PlexContinue.Item> items = parse(
+                "<Video key=\"/library/metadata/1\" title=\"Episode 44\" grandparentTitle=\"Show\" parentIndex=\"1\" index=\"44\" grandparentThumb=\"/s\"/>"
+                + "<Video key=\"/library/metadata/3\" title=\"Movie\" thumb=\"/m\"/>");
+        assertEquals("S1 \u00B7 E44", items.get(0).episode);
+        assertEquals("", items.get(1).episode);
     }
 }

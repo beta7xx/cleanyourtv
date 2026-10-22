@@ -75,11 +75,11 @@ final class PlexContinue {
     static final int SMALL_W = 96, SMALL_H = 144, LARGE_W = 122, LARGE_H = 182, GAP = 14, EDGE = 63;
 
     static final class Item {
-        final String key, show, title, poster, art, summary, cast, meta;
+        final String key, show, title, poster, art, summary, cast, meta, episode;   // episode: "S1 · E44", "" for a movie
         final int progress;   // 0..100, viewOffset / duration
-        Item(String key, String show, String title, String poster, String art, String summary, String cast, String meta, int progress) {
+        Item(String key, String show, String title, String poster, String art, String summary, String cast, String meta, String episode, int progress) {
             this.key = key; this.show = show; this.title = title; this.poster = poster; this.art = art;
-            this.summary = summary; this.cast = cast; this.meta = meta; this.progress = progress;
+            this.summary = summary; this.cast = cast; this.meta = meta; this.episode = episode; this.progress = progress;
         }
         /** "/library/metadata/137585" -> "137585", as the sessions list names it. */
         String ratingKey() { return key.substring(key.lastIndexOf('/') + 1); }
@@ -142,7 +142,9 @@ final class PlexContinue {
         // The hub tabs as Plex's home lists them, the current one white, the others dim; focusable from the posters.
         tabsRow = new LinearLayout(ctx);
         tabsRow.setOrientation(LinearLayout.HORIZONTAL);
-        tabsRow.setPadding(dp(EDGE), 0, 0, dp(8));   // plus the list's 6dp: Plex's 14dp from header to posters
+        tabsRow.setPadding(dp(EDGE) - dp(14), dp(6), 0, dp(8));   // 6dp above: Thai vowel marks; plus the list's 6dp: Plex's 14dp to the posters
+        tabsRow.setClipChildren(false);
+        tabsRow.setClipToPadding(false);
         tabs.add(new Tab(ctx.getString(R.string.plex_continue), "/hubs/continueWatching"));
         buildTabs();
         row.addView(tabsRow);
@@ -163,7 +165,7 @@ final class PlexContinue {
 
     /** Left edge of the header and the posters, in px: the launcher lines it up with the dock band. */
     void setEdge(int px) {
-        row.getChildAt(0).setPadding(px, 0, 0, dp(8));
+        row.getChildAt(0).setPadding(px - dp(14), dp(6), 0, dp(8));
         list.setPadding(px, dp(6), px, dp(6));
         // The layout manager keeps the first poster where it was when the padding changes; put it back at the edge.
         ((LinearLayoutManager) list.getLayoutManager()).scrollToPositionWithOffset(0, 0);
@@ -174,7 +176,7 @@ final class PlexContinue {
         View title = row.getChildAt(0);
         if (title.getMeasuredHeight() == 0)
             title.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        return title.getMeasuredHeight() + dp(12) + posterH();
+        return title.getMeasuredHeight() + dp(12) + posterH() + (captions() ? dp(CAPTION_DP) : 0);
     }
 
     /** Compact (above the dock) or the Plex app's size (row focused). Applies to every poster at once. */
@@ -201,8 +203,10 @@ final class PlexContinue {
             t.setText(tabs.get(i).title);
             t.setTextSize(20);
             t.setTypeface(ctx.getResources().getFont(R.font.outfit_medium));
-            t.setPadding(0, 0, dp(28), 0);
+            t.setPadding(dp(14), dp(4), dp(14), dp(6));
+            t.setIncludeFontPadding(true);   // Thai marks above the x-height need the font's own top padding
             t.setFocusable(true);
+            t.setBackgroundResource(R.drawable.plex_tab_bg);   // the pills' glass when focused, nothing otherwise
             t.setOnFocusChangeListener((v, focused) -> { if (focused) selectTab(index); paintTabs(); });
             t.setOnKeyListener((v, keyCode, event) -> {
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
@@ -225,8 +229,8 @@ final class PlexContinue {
     private void paintTabs() {
         for (int i = 0; i < tabsRow.getChildCount(); i++) {
             TextView t = (TextView) tabsRow.getChildAt(i);
-            t.setTextColor(i == tab ? Color.WHITE : 0x80FFFFFF);
-            t.setAlpha(t.isFocused() || i == tab ? 1f : 0.9f);
+            t.setTextColor(t.isFocused() ? 0xFF111111 : i == tab ? Color.WHITE : 0x80FFFFFF);
+            t.setAlpha(1f);
             t.setVisibility(large || i == tab ? View.VISIBLE : View.GONE);   // compact: one header, as before
         }
     }
@@ -322,11 +326,11 @@ final class PlexContinue {
         if (items.isEmpty()) return false;
         int pos = Math.min(lastFocused, items.size() - 1);
         RecyclerView.ViewHolder vh = list.findViewHolderForAdapterPosition(pos);
-        if (vh != null) { vh.itemView.requestFocus(); return true; }
+        if (vh != null) { ((Holder) vh).card.requestFocus(); return true; }
         list.scrollToPosition(pos);
         list.post(() -> {
             RecyclerView.ViewHolder h = list.findViewHolderForAdapterPosition(pos);
-            if (h != null) h.itemView.requestFocus();
+            if (h != null) ((Holder) h).card.requestFocus();
         });
         return true;
     }
@@ -486,37 +490,64 @@ final class PlexContinue {
     // ---- row view --------------------------------------------------------------------------------
 
     private final class Holder extends RecyclerView.ViewHolder {
+        final FrameLayout card;
         final ImageView image;
         final View bar, track;
+        final TextView show, title, episode;
         final GradientDrawable frame = new GradientDrawable();
         int progress;
-        Holder(FrameLayout card, ImageView image, View bar, View track) {
-            super(card);
-            this.image = image; this.bar = bar; this.track = track;
+        Holder(LinearLayout item, FrameLayout card, ImageView image, View bar, View track, TextView show, TextView title, TextView episode) {
+            super(item);
+            this.card = card; this.image = image; this.bar = bar; this.track = track;
+            this.show = show; this.title = title; this.episode = episode;
         }
     }
+
+    /** Caption lines under a poster, Plex's three: 14sp white, 12sp and 12sp dim. Only in the Recently Added tabs. */
+    static final int CAPTION_DP = 58;
+    private boolean captions() { return tab != 0; }
 
     private final class Adapter extends RecyclerView.Adapter<Holder> {
         @Override public int getItemCount() { return items.size(); }
         @Override public long getItemId(int position) { return items.get(position).key.hashCode(); }
 
+        private TextView caption(int sp, int color, int topPad) {
+            TextView t = new TextView(ctx);
+            t.setTextSize(sp);
+            t.setTextColor(color);
+            t.setSingleLine(true);
+            t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            t.setPadding(0, topPad, 0, 0);
+            t.setTypeface(ctx.getResources().getFont(sp == 14 ? R.font.outfit_medium : R.font.outfit_regular));
+            return t;
+        }
+
         /** The poster's size for the current mode, and the progress bar's width inside it. */
         void size(Holder h) {
             ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) h.itemView.getLayoutParams();
             lp.width = posterW();
-            lp.height = posterH();
+            lp.height = posterH() + (captions() ? dp(CAPTION_DP) : 0);
             lp.setMarginEnd(dp(GAP));
             h.itemView.setLayoutParams(lp);
+            h.card.getLayoutParams().height = posterH();
+            int vis = captions() ? View.VISIBLE : View.GONE;
+            h.show.setVisibility(vis); h.title.setVisibility(vis); h.episode.setVisibility(vis);
             h.bar.getLayoutParams().width = (posterW() - 2 * dp(8)) * h.progress / 100;
             h.bar.requestLayout();
         }
 
         @Override public Holder onCreateViewHolder(ViewGroup parent, int type) {
-            FrameLayout card = new FrameLayout(ctx);
-            card.setFocusable(true);
+            LinearLayout item = new LinearLayout(ctx);
+            item.setOrientation(LinearLayout.VERTICAL);
+            item.setClipChildren(false);
             RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(posterW(), posterH());
             lp.setMarginEnd(dp(GAP));
-            card.setLayoutParams(lp);
+            item.setLayoutParams(lp);
+            FrameLayout card = new FrameLayout(ctx);
+            card.setFocusable(true);
+            item.addView(card, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, posterH()));
+            TextView show = caption(14, Color.WHITE, dp(8)), title = caption(12, 0x99FFFFFF, dp(2)), episode = caption(12, 0x99FFFFFF, dp(2));
+            item.addView(show); item.addView(title); item.addView(episode);
             ImageView image = new ImageView(ctx);
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setBackgroundColor(0xFF1E1E1E);
@@ -532,7 +563,7 @@ final class PlexContinue {
             FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(0, dp(2), Gravity.BOTTOM | Gravity.START);
             blp.setMargins(dp(8), 0, 0, dp(8));
             card.addView(bar, blp);
-            Holder h = new Holder(card, image, bar, track);
+            Holder h = new Holder(item, card, image, bar, track, show, title, episode);
             h.frame.setCornerRadius(dp(6));
             h.frame.setColor(Color.TRANSPARENT);
             card.setForeground(h.frame);   // the stroke draws over the poster, clipped with it
@@ -576,6 +607,9 @@ final class PlexContinue {
         @Override public void onBindViewHolder(Holder h, int position) {
             Item it = items.get(position);
             h.progress = it.progress;
+            h.show.setText(it.show);
+            h.title.setText(it.title.equals(it.show) ? "" : it.title);
+            h.episode.setText(it.episode);
             size(h);
             // Plex shows the bar only on items with progress.
             h.bar.setVisibility(it.progress > 0 ? View.VISIBLE : View.GONE);
@@ -607,10 +641,9 @@ final class PlexContinue {
     /** The hub's items, or null when the request failed. */
     private List<Item> get(String path) {
         try {
-            boolean onePerShow = !path.contains("continueWatching") && !path.contains("onDeck");
             // A hub key may carry its own query (?type=2&sectionID=24); count= is the hub page size, Container-Size the library's.
             HttpURLConnection c = open(base + path + (path.contains("?") ? "&" : "?") + "count=40&X-Plex-Container-Size=40&X-Plex-Token=" + token);
-            try (InputStream in = c.getInputStream()) { return parse(in, onePerShow); } finally { c.disconnect(); }
+            try (InputStream in = c.getInputStream()) { return parse(in); } finally { c.disconnect(); }
         } catch (Exception e) {
             return null;
         }
@@ -660,15 +693,9 @@ final class PlexContinue {
      * names. Items without any poster are skipped.
      */
     static List<Item> parse(InputStream in) throws Exception {
-        return parse(in, false);
-    }
-
-    /** onePerShow: a Recently Added hub lists every new episode; Plex shows one card per series, newest first. */
-    static List<Item> parse(InputStream in, boolean onePerShow) throws Exception {
         List<Item> out = new ArrayList<>();
-        Set<String> shows = new HashSet<>();
         SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
-            String key, show, title, poster, art, summary, meta;
+            String key, show, title, poster, art, summary, meta, episode;
             int progress;
             List<String> cast;
 
@@ -686,8 +713,11 @@ final class PlexContinue {
                 summary = a.getValue("summary") == null ? "" : a.getValue("summary");
                 cast = new ArrayList<>();
                 List<String> parts = new ArrayList<>();
+                episode = "";
                 if (a.getValue("grandparentTitle") != null) {
                     if (a.getValue("index") != null) parts.add("E" + a.getValue("index"));
+                    // Plex's caption line under a Recently Added poster: "S1 · E44".
+                    if (a.getValue("parentIndex") != null && a.getValue("index") != null) episode = "S" + a.getValue("parentIndex") + " \u00B7 E" + a.getValue("index");
                     if (a.getValue("originallyAvailableAt") != null) parts.add(displayDate(a.getValue("originallyAvailableAt")));
                 } else if (a.getValue("year") != null) parts.add(a.getValue("year"));
                 long dur = 0;
@@ -704,8 +734,7 @@ final class PlexContinue {
 
             @Override public void endElement(String uri, String local, String tag) {
                 if (!"Video".equals(tag) || key == null) return;
-                if (!onePerShow || shows.add(poster))
-                    out.add(new Item(key, show, title, poster, art, summary, String.join(", ", cast), meta, progress));
+                out.add(new Item(key, show, title, poster, art, summary, String.join(", ", cast), meta, episode, progress));
                 key = null; cast = null;
             }
         });

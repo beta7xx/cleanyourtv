@@ -1621,7 +1621,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void refreshPlexRow() {
         if (plexLarge) {
             // The hub emptied under the focused row (finished elsewhere): back to the Plex tile, nothing stranded.
-            if (!plexRow.hasItems()) { leavePlexLarge(); focusTile(plexDockPosition()); }
+            if (!plexRow.hasItems()) { leavePlexLarge(); focusTile(plexDockPosition()); return; }
+            // A tab switch changes the row's height (captions under Recently Added posters): keep its bottom put.
+            float rowY = root.getHeight() - 24 * density - plexRow.height();
+            plexRow.view().setY(rowY);
+            // The details block keeps 24dp above the row: a Recently Added tab's captions make the row taller.
+            plexDetails.setTranslationY(Math.min(0f, rowY - 24 * density - plexDetails.getBottom()));
             return;
         }
         refitGlass(true);   // runs the dock tile's focus again, which places or hides the row
@@ -1655,6 +1660,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         float dy = root.getHeight() - 16 * density - (g.top + grid.getPaddingTop());
         plexScrim.setVisibility(View.VISIBLE);
         plexDetails.setVisibility(View.VISIBLE);
+        plexDetails.setTranslationY(0f);
         grid.animate().cancel();
         if (!animations || reducedMotion) {
             v.setY(rowY);
