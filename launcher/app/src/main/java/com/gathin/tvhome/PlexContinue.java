@@ -4,9 +4,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -31,7 +29,6 @@ import java.net.HttpURLConnection;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
-import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,6 +38,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.xml.parsers.SAXParserFactory;
 
@@ -87,6 +86,11 @@ final class PlexContinue {
         String ratingKey() { return key.substring(key.lastIndexOf('/') + 1); }
     }
 
+    /** The item's numeric ratingKey, unique on the server; a String hash (which can collide) only for an odd key. */
+    static long stableId(String key) {
+        try { return Long.parseLong(key.substring(key.lastIndexOf('/') + 1)); } catch (NumberFormatException e) { return key.hashCode(); }
+    }
+
     /** A server session: enough to report it stopped in the playing client's name. */
     static final class Session {
         final String ratingKey, key, client, time, duration, state, address;
@@ -104,18 +108,22 @@ final class PlexContinue {
     private final LruCache<String, Bitmap> thumbs = new LruCache<String, Bitmap>(POSTER_CACHE_BYTES) {
         @Override protected int sizeOf(String key, Bitmap b) { return b.getByteCount(); }
     };
+    /** Posters being fetched (main thread only), so a rebind does not ask for the same one twice. */
+    private final Set<String> loading = new HashSet<>();
+    /** Two fetches at a time: a size switch rebinds every poster, and a thread each is too much for a 1 GB TV. */
+    private final ExecutorService posterPool = Executors.newFixedThreadPool(2);
     private final LinearLayout row;
     private final RecyclerView list;
     private final Adapter adapter = new Adapter();
-    private String machine;   // Plex server machineIdentifier, for the plex:// link
+    private volatile String machine;   // Plex server machineIdentifier, for the plex:// link
     private List<Item> items = new ArrayList<>();
     private int lastFocused;
-    private boolean running;
+    private volatile boolean running;
     private boolean shown = true;
     private final Runnable refresh = this::refresh;
     private Runnable resend;
     /** Bumped by start() and open(): a resend check already running (sessions() can take seconds) must not send after Home resumed. */
-    private int resendGen;
+    private volatile int resendGen;
     private boolean large;
 
     /** A hub the row can show: Continue Watching, or a library's Recently Added, as Plex's home lists them. */
@@ -168,6 +176,9 @@ final class PlexContinue {
 
     boolean hasItems() { return !items.isEmpty(); }
 
+    /** On Continue Watching, the only tab the compact row shows; the others are browsed in the large row. */
+    boolean onFirstTab() { return tab == 0; }
+
     /** Left edge of the header and the posters, in px: the launcher lines it up with the dock band. */
     void setEdge(int px) {
         row.getChildAt(0).setPadding(px - dp(14), dp(6), 0, dp(8));
@@ -181,7 +192,7 @@ final class PlexContinue {
         View title = row.getChildAt(0);
         if (title.getMeasuredHeight() == 0)
             title.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        return title.getMeasuredHeight() + dp(12) + posterH() + (captionRoom() ? dp(CAPTION_DP) : 0);
+        return title.getMeasuredHeight() + dp(12) + posterH() + (large ? dp(CAPTION_DP) : 0);
     }
 
     /** Compact (above the dock) or the Plex app's size (row focused). Applies to every poster at once. */
@@ -249,7 +260,8 @@ final class PlexContinue {
         tab = index;
         lastFocused = 0;
         paintTabs();
-        new Thread(this::loadRow, "plex-tab").start();
+        // Not after stop(): onPause shrinks the row back to tab 0, and start() loads it on the next resume.
+        if (running) new Thread(this::loadRow, "plex-tab").start();
     }
 
     /**
@@ -262,7 +274,7 @@ final class PlexContinue {
         List<Tab> fresh = new ArrayList<>();
         fresh.add(tabs.get(0));
         try {
-            HttpURLConnection c = open(base + "/hubs/promoted?contentDirectoryID=" + String.join(",", keys) + "&count=1&X-Plex-Token=" + token);
+            HttpURLConnection c = PlexBackdrop.open(base + "/hubs/promoted?contentDirectoryID=" + String.join(",", keys) + "&count=1&X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) {
                 SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
                     @Override public void startElement(String uri, String l, String tag, Attributes a) {
@@ -287,31 +299,12 @@ final class PlexContinue {
         main.post(() -> { tabs = ordered; buildTabs(); });
     }
 
-    /** Library keys for the configured section titles, from /library/sections. */
+    /** The configured library names that matched, alongside sectionKeys(). */
     private final List<String> sectionTitles = new ArrayList<>();
 
-    /** Library keys for the configured section titles, in config order; sectionTitles gets the names alongside. */
     private List<String> sectionKeys() {
-        List<String> keys = new ArrayList<>();
         sectionTitles.clear();
-        if (sections.length == 0) return keys;
-        Map<String, String> byTitle = new HashMap<>();
-        try {
-            HttpURLConnection c = open(base + "/library/sections?X-Plex-Token=" + token);
-            try (InputStream in = c.getInputStream()) {
-                SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
-                    @Override public void startElement(String uri, String local, String tag, Attributes a) {
-                        if ("Directory".equals(tag) && a.getValue("title") != null && a.getValue("key") != null)
-                            byTitle.put(a.getValue("title").toLowerCase(Locale.ROOT), a.getValue("key"));
-                    }
-                });
-            } finally { c.disconnect(); }
-        } catch (Exception ignored) { }
-        for (String s : sections) {
-            String key = byTitle.get(s.toLowerCase(Locale.ROOT));
-            if (key != null) { keys.add(key); sectionTitles.add(s); }
-        }
-        return keys;
+        return PlexBackdrop.sectionKeys(base, token, sections, sectionTitles);
     }
 
     private int dp(int v) { return (int) (v * density); }
@@ -347,7 +340,7 @@ final class PlexContinue {
     /** Home is in front: drop a pending resend (the user came back), end this TV's server sessions, refresh. */
     void start() {
         running = true;
-        resendGen++;
+        final int g = ++resendGen;
         if (resend != null) { main.removeCallbacks(resend); resend = null; }
         new Thread(() -> {
             if (machine == null) machine = fetchMachine();
@@ -358,8 +351,12 @@ final class PlexContinue {
             try { Thread.sleep(3000); } catch (InterruptedException ignored) { }
             if (!running) return;
             Set<String> mine = localAddresses();
+            List<Session> live = sessions();
+            // A poster opened during the wait (open() bumps resendGen) or Home left while sessions() ran: the
+            // session found now may be the one the user just started, so leave it playing.
+            if (!running || g != resendGen) return;
             boolean ended = false;
-            for (Session s : sessions()) if (mine.contains(s.address)) { endSession(s); ended = true; }
+            for (Session s : live) if (mine.contains(s.address)) { endSession(s); ended = true; }
             if (ended) loadRow();   // the item just stopped now carries its resume position
         }, "plex-continue").start();
         main.removeCallbacks(refresh);
@@ -392,7 +389,9 @@ final class PlexContinue {
             if (!running || same(items, result)) return;
             items = result;
             adapter.notifyDataSetChanged();
-            row.setVisibility(items.isEmpty() ? View.GONE : shown ? View.VISIBLE : View.INVISIBLE);
+            // A library with nothing recently added keeps its tab strip on screen, so the user can move to another tab.
+            boolean keep = large && forTab != 0;
+            row.setVisibility(items.isEmpty() && !keep ? View.GONE : shown ? View.VISIBLE : View.INVISIBLE);
             host.onItemsChanged();
             // A tab switch while the row is large: the art and details follow the new list's first item.
             if (large && forTab != 0 && !items.isEmpty()) { list.scrollToPosition(0); host.onItemFocused(items.get(0)); }
@@ -413,7 +412,14 @@ final class PlexContinue {
 
     /** The link Plex's own Watch Next entries carry; sent once, and once more if the server shows no playback. */
     private void open(Item item) {
-        if (machine == null) return;
+        if (machine == null) {
+            // /identity failed at resume (Plex still booting): ask again now rather than ignore the click.
+            new Thread(() -> {
+                machine = fetchMachine();
+                if (machine != null) main.post(() -> open(item));
+            }, "plex-identity").start();
+            return;
+        }
         if (resend != null) main.removeCallbacks(resend);
         final int g = ++resendGen;
         sendPlay(item);
@@ -449,7 +455,7 @@ final class PlexContinue {
     /** Every video session in /status/sessions with its Player's address; empty when the request failed. */
     private List<Session> sessions() {
         try {
-            HttpURLConnection c = open(base + "/status/sessions?X-Plex-Token=" + token);
+            HttpURLConnection c = PlexBackdrop.open(base + "/status/sessions?X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) { return parseSessions(in); } finally { c.disconnect(); }
         } catch (Exception ignored) { }
         return new ArrayList<>();
@@ -479,7 +485,7 @@ final class PlexContinue {
     /** The timeline report a Plex client sends when Back leaves its player: the server drops the session on it. */
     private void endSession(Session s) {
         try {
-            HttpURLConnection c = open(base + "/:/timeline?ratingKey=" + s.ratingKey + "&key=" + URLEncoder.encode(s.key, "UTF-8")
+            HttpURLConnection c = PlexBackdrop.open(base + "/:/timeline?ratingKey=" + s.ratingKey + "&key=" + URLEncoder.encode(s.key, "UTF-8")
                     + "&state=stopped&time=" + s.time + "&duration=" + s.duration + "&identifier=com.plexapp.plugins.library"
                     + "&X-Plex-Client-Identifier=" + s.client + "&X-Plex-Token=" + token);
             try { c.getResponseCode(); } finally { c.disconnect(); }
@@ -503,7 +509,6 @@ final class PlexContinue {
         final ImageView image;
         final View bar, track;
         final TextView show, title, episode;
-        final GradientDrawable frame = new GradientDrawable();
         int progress;
         Holder(LinearLayout item, FrameLayout card, ImageView image, View bar, View track, TextView show, TextView title, TextView episode) {
             super(item);
@@ -514,12 +519,10 @@ final class PlexContinue {
 
     /** Caption lines under a poster, Plex's three: 14sp white, 12sp and 12sp dim. In the large row, on every tab. */
     static final int CAPTION_DP = 62;
-    private boolean captions() { return large; }
-    private boolean captionRoom() { return large; }
 
     private final class Adapter extends RecyclerView.Adapter<Holder> {
         @Override public int getItemCount() { return items.size(); }
-        @Override public long getItemId(int position) { return items.get(position).key.hashCode(); }
+        @Override public long getItemId(int position) { return stableId(items.get(position).key); }
 
         private TextView caption(int sp, int color, int topPad) {
             TextView t = new TextView(ctx);
@@ -536,11 +539,11 @@ final class PlexContinue {
         void size(Holder h) {
             ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) h.itemView.getLayoutParams();
             lp.width = posterW();
-            lp.height = posterH() + (captionRoom() ? dp(CAPTION_DP) : 0);
+            lp.height = posterH() + (large ? dp(CAPTION_DP) : 0);
             lp.setMarginEnd(dp(GAP));
             h.itemView.setLayoutParams(lp);
             h.card.getLayoutParams().height = posterH();
-            int vis = captions() ? View.VISIBLE : View.GONE;
+            int vis = large ? View.VISIBLE : View.GONE;
             h.show.setVisibility(vis); h.title.setVisibility(vis); h.episode.setVisibility(vis);
             h.bar.getLayoutParams().width = (posterW() - 2 * dp(8)) * h.progress / 100;
             h.bar.requestLayout();
@@ -575,9 +578,6 @@ final class PlexContinue {
             card.addView(bar, blp);
             Holder h = new Holder(item, card, image, bar, track, show, title, episode);
             MainActivity.glassTarget(card, 1.04f, dp(6) * 1.04f);
-            h.frame.setCornerRadius(dp(6));
-            h.frame.setColor(Color.TRANSPARENT);
-            card.setForeground(h.frame);   // the stroke draws over the poster, clipped with it
             card.setClipToOutline(true);
             card.setOutlineProvider(new android.view.ViewOutlineProvider() {
                 @Override public void getOutline(View view, android.graphics.Outline outline) {
@@ -626,33 +626,27 @@ final class PlexContinue {
             h.track.setVisibility(it.progress > 0 ? View.VISIBLE : View.GONE);
             Bitmap cached = thumbs.get(it.poster);
             h.image.setImageBitmap(cached);
-            if (cached != null) return;
-            new Thread(() -> {
-                Bitmap b = fetchThumb(it.poster);
-                if (b == null) return;
+            if (cached != null || !loading.add(it.poster)) return;   // cached, or already on its way
+            posterPool.execute(() -> {
+                Bitmap b = PlexBackdrop.transcode(base, token, it.poster, TW, TH);
                 main.post(() -> {
+                    loading.remove(it.poster);
+                    if (b == null) return;
                     thumbs.put(it.poster, b);
-                    int pos = h.getBindingAdapterPosition();
-                    if (pos >= 0 && pos < items.size() && items.get(pos).poster.equals(it.poster)) h.image.setImageBitmap(b);
+                    // Every poster showing it, including holders parked in the view cache, which rebind on this.
+                    for (int i = 0; i < items.size(); i++) if (items.get(i).poster.equals(it.poster)) notifyItemChanged(i);
                 });
-            }, "plex-thumb").start();
+            });
         }
     }
 
     // ---- Plex HTTP ---------------------------------------------------------------------------------
 
-    private HttpURLConnection open(String url) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(4000);
-        c.setReadTimeout(8000);
-        return c;
-    }
-
     /** The hub's items, or null when the request failed. */
     private List<Item> get(String path) {
         try {
             // A hub key may carry its own query (?type=2&sectionID=24); count= is the hub page size, Container-Size the library's.
-            HttpURLConnection c = open(base + path + (path.contains("?") ? "&" : "?") + "count=40&X-Plex-Container-Size=40&X-Plex-Token=" + token);
+            HttpURLConnection c = PlexBackdrop.open(base + path + (path.contains("?") ? "&" : "?") + "count=40&X-Plex-Container-Size=40&X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) { return parse(in); } finally { c.disconnect(); }
         } catch (Exception e) {
             return null;
@@ -662,7 +656,7 @@ final class PlexContinue {
     private String fetchMachine() {
         final String[] out = new String[1];
         try {
-            HttpURLConnection c = open(base + "/identity?X-Plex-Token=" + token);
+            HttpURLConnection c = PlexBackdrop.open(base + "/identity?X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) {
                 SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
                     @Override public void startElement(String uri, String local, String tag, Attributes a) {
@@ -672,20 +666,6 @@ final class PlexContinue {
             } finally { c.disconnect(); }
         } catch (Exception ignored) { }
         return out[0];
-    }
-
-    private Bitmap fetchThumb(String thumb) {
-        try {
-            HttpURLConnection c = open(base + "/photo/:/transcode?width=" + TW + "&height=" + TH + "&minSize=1&upscale=1&url="
-                    + URLEncoder.encode(thumb, "UTF-8") + "&X-Plex-Token=" + token);
-            try (InputStream in = c.getInputStream()) {
-                BitmapFactory.Options o = new BitmapFactory.Options();
-                o.inPreferredConfig = Bitmap.Config.RGB_565;
-                return BitmapFactory.decodeStream(in, null, o);
-            } finally { c.disconnect(); }
-        } catch (Exception | OutOfMemoryError e) {
-            return null;
-        }
     }
 
     /** "2026-10-16" as the TV's locale writes a medium date, as the Plex app does; the raw value when it is not a date. */

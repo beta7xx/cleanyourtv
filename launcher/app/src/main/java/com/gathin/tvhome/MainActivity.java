@@ -404,24 +404,23 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // the theme's background, so launch looks the same.
         getWindow().setBackgroundDrawable(null);
         wallpaperPlayer = new WallpaperPlayer(this, root, cfg);
-        // Token lives on the TV only: `settings put global plex_token <token>`, never in the repo.
+        // Token lives on the TV only: `settings put global plex_token <token>`, never in the repo. The server is
+        // config.xml plex_url, else `settings put global plex_url`, else found on the LAN (findPlex).
         String plexUrl = getString(R.string.plex_url);
-        String plexToken = Settings.Global.getString(getContentResolver(), "plex_token");
-        if (!plexUrl.isEmpty() && plexToken != null && !plexToken.isEmpty()) {
-            plex = new PlexBackdrop(this, root, plexUrl, plexToken, getString(R.string.plex_sections), density);
-            // Continue Watching: shown while the Plex dock tile is focused, above the dock; Up grows it to Plex's size.
-            plexRow = new PlexContinue(this, plexHost, plexUrl, plexToken, getString(R.string.plex_sections), density);
-            root.addView(plexRow.view(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+        if (plexUrl.isEmpty()) {
+            String s = Settings.Global.getString(getContentResolver(), "plex_url");
+            if (s != null) plexUrl = s.trim();
         }
+        plexToken = Settings.Global.getString(getContentResolver(), "plex_token");
+        if (plexToken != null && plexToken.isEmpty()) plexToken = null;
+        // Neither names a server: onResume finds one on the LAN (PlexGdm) and sets the row up then.
+        if (!plexUrl.isEmpty() && plexToken != null) startPlex(plexUrl);
         plexScrim = findViewById(R.id.plexScrim);
         sky = findViewById(R.id.sky);
         sky.setIntensity(cfg.skyIntensity);
         glass = findViewById(R.id.glass);
         if (festive) glass.setAccent(festival.accentColor());
         ambient = findViewById(R.id.ambient);
-        // config.xml ambient_glow false: no colour wash behind the dock (a photo backdrop does not want one).
-        if (!getResources().getBoolean(R.bool.ambient_glow)) ambient.setVisibility(View.GONE);
         // The glow is one bitmap, so its alpha can be applied while drawing it. Otherwise every frame of
         // a fade renders it into a full-screen offscreen buffer first.
         ambient.forceHasOverlappingRendering(false);
@@ -587,7 +586,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // No dock to push down: the grid starts at the top, with room for the first row's zoom and glass.
             if (!MainActivity.this.dockRow) want = (int) (AppAdapter.TOP_ROOM_DP * density);
             if (grid.getPaddingTop() != want) {
-                grid.setPadding(grid.getPaddingLeft(), want, grid.getPaddingRight(), grid.getPaddingBottom());
+                // The grid's height changes after start-up when the header does: an input pill under the gear
+                // appearing or going away (HDMI plugged or unplugged). Posted, as the side padding above, and the
+                // focused tile placed again, which parks the dock on the new line and moves the glass, the shelf and
+                // the Plex row with it; without that the dock kept its old offset and slid up under the Plex row.
+                final int top = want;
+                grid.post(() -> {
+                    grid.setPadding(grid.getPaddingLeft(), top, grid.getPaddingRight(), grid.getPaddingBottom());
+                    grid.post(() -> refitGlass(true));
+                });
             }
             // Cold start or column count > 4: the first focus can run before the grid has its final width or
             // padding, leaving the glass at the XML design size until a key is pressed.
@@ -631,7 +638,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
 
         btnInputs = findViewById(R.id.btnInputs);
-        inputTiles = findViewById(R.id.inputTiles);
+        inputTiles = makeInputTiles();
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
         btnWifi.setOnClickListener(v -> openNetworkPill());
@@ -885,8 +892,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             pillsShown = true;
         }
         if (showStats) startStats();
+        resumed = true;
         if (plex != null) plex.start();
         if (plexRow != null) plexRow.start();
+        findPlex();
         sky.update();
         wallpaperPlayer.start();
         handler.postDelayed(minuteTick, MINUTE_MS);
@@ -1057,6 +1066,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroArt.animate().cancel();
         handler.removeCallbacks(minuteTick);
         stopStats();
+        resumed = false;
         if (plex != null) plex.stop();
         if (plexRow != null) { plexRow.stop(); leavePlexLarge(); }
         if (diya != null) diya.stop();
@@ -1641,6 +1651,37 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     // ---- Plex Continue Watching ------------------------------------------------------------------
 
+    private String plexToken;          // Settings.Global plex_token; null = no Plex at all
+    private boolean resumed, plexSearching;
+
+    /** The backdrop and the Continue Watching row for this server; started at once if Home is already in front. */
+    private void startPlex(String url) {
+        plex = new PlexBackdrop(this, root, url, plexToken, getString(R.string.plex_sections), density);
+        // Continue Watching: shown while the Plex dock tile is focused, above the dock; Up grows it to Plex's size.
+        plexRow = new PlexContinue(this, plexHost, url, plexToken, getString(R.string.plex_sections), density);
+        root.addView(plexRow.view(), root.indexOfChild(plex.caption()) + 1, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+        if (shelfLeft >= 0) {   // found after the first layout: line it up with the band now, as alignShelf does
+            int inset = Math.round(12 * density);
+            plexRow.setEdge(shelfLeft + inset);
+            plex.setEndMargin(root.getWidth() - shelfRight + inset);
+        }
+        if (resumed) { plex.start(); plexRow.start(); }
+    }
+
+    /** No server configured: ask the LAN (GDM). Again on every resume until one answers, e.g. a server still booting. */
+    private void findPlex() {
+        if (plex != null || plexToken == null || plexSearching) return;
+        plexSearching = true;
+        new Thread(() -> {
+            String url = PlexGdm.find(2000);
+            runOnUiThread(() -> {
+                plexSearching = false;
+                if (url != null && plex == null && !isDestroyed()) startPlex(url);
+            });
+        }, "plex-gdm").start();
+    }
+
     private static final String PLEX_PACKAGE = "com.plexapp.android";
 
     private boolean isPlexDock(int position) {
@@ -1655,8 +1696,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** Items arrived or changed while the Plex dock tile has focus: run the dock focus again so the row is placed. */
     private void refreshPlexRow() {
         if (plexLarge) {
-            // The hub emptied under the focused row (finished elsewhere): back to the Plex tile, nothing stranded.
-            if (!plexRow.hasItems()) { leavePlexLarge(); focusTile(plexDockPosition()); return; }
+            // Continue Watching emptied under the focused row (finished elsewhere): back to the Plex tile, nothing
+            // stranded. An empty library tab stays, with focus on its tab, so Left/Right reach the other tabs.
+            if (!plexRow.hasItems() && plexRow.onFirstTab()) { leavePlexLarge(); focusTile(plexDockPosition()); return; }
             return;
         }
         refitGlass(true);   // runs the dock tile's focus again, which places or hides the row
@@ -2716,8 +2758,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * the dock; Left/Right stay put.
      */
     private void updateInputTiles() {
-        boolean hadFocus = inputTiles.hasFocus();
-        inputTiles.removeAllViews();
+        View focused = inputTiles.findFocus();
+        Object focusedId = focused == null ? null : focused.getTag();
+        List<View> pills = new ArrayList<>();
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         if (tim != null) {
             List<TvInputInfo> inputs = tim.getTvInputList();
@@ -2741,15 +2784,67 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 final String id = info.getId();
                 TextView pill = (TextView) getLayoutInflater().inflate(R.layout.pill_input, inputTiles, false);
                 pill.setText(label);
+                pill.setTag(id);
                 pill.setOnClickListener(v -> openInput(id));
                 pill.setOnKeyListener(inputTileKeys);
                 glassTarget(pill, 1f, 21 * density);
-                inputTiles.addView(pill);
+                pills.add(pill);
             }
         }
-        int count = inputTiles.getChildCount();
-        inputTiles.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
-        if (hadFocus && count == 0) findViewById(R.id.btnSettings).requestFocus();
+        // Input events fire often (a CEC device waking, Sony's table rewriting itself) and usually change nothing:
+        // keep the pills then, so a focused one is not destroyed and focus does not jump to the first view.
+        if (samePills(pills)) return;
+        // Leave focus on the gear while the pills are swapped, so removing the focused one does not refocus
+        // whatever comes first in the window; it comes back to the same input below if that input is still there.
+        if (focusedId != null) findViewById(R.id.btnSettings).requestFocus();
+        inputTiles.removeAllViews();
+        View again = null;
+        for (View p : pills) {
+            inputTiles.addView(p);
+            if (p.getTag().equals(focusedId)) again = p;
+        }
+        inputTiles.setVisibility(pills.isEmpty() ? View.GONE : View.VISIBLE);
+        if (again != null) again.requestFocus();
+    }
+
+    /**
+     * The column of input pills, floating on root under the top buttons rather than inside the header: in the header
+     * each pill made it taller, so plugging or unplugging an HDMI cable resized the grid and the whole home screen
+     * jumped. Kept just above the header in drawing order, where it sat before.
+     */
+    private LinearLayout makeInputTiles() {
+        LinearLayout tiles = new LinearLayout(this);
+        tiles.setOrientation(LinearLayout.VERTICAL);
+        tiles.setGravity(Gravity.END);
+        tiles.setClipChildren(false);
+        tiles.setClipToPadding(false);
+        tiles.setVisibility(View.GONE);
+        View top = findViewById(R.id.topButtons);
+        View header = (View) top.getParent().getParent();   // the column holding the header and the grid
+        root.addView(tiles, root.indexOfChild(header) + 1,
+                new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.RIGHT));
+        // Right edge on the buttons' right edge, 2dp under their 6dp bottom margin, as layout_below placed it.
+        top.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> v.post(() -> {
+            Rect box = new Rect(0, 0, v.getWidth(), v.getHeight());
+            root.offsetDescendantRectToMyCoords(v, box);
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) tiles.getLayoutParams();
+            int topMargin = box.bottom + Math.round(8 * density), rightMargin = root.getWidth() - box.right;
+            if (lp.topMargin == topMargin && lp.rightMargin == rightMargin) return;
+            lp.topMargin = topMargin;
+            lp.rightMargin = rightMargin;
+            tiles.setLayoutParams(lp);
+        }));
+        return tiles;
+    }
+
+    /** The same inputs with the same labels, in the same order, as the pills already shown. */
+    private boolean samePills(List<View> pills) {
+        if (pills.size() != inputTiles.getChildCount()) return false;
+        for (int i = 0; i < pills.size(); i++) {
+            TextView now = (TextView) inputTiles.getChildAt(i), next = (TextView) pills.get(i);
+            if (!next.getTag().equals(now.getTag()) || !next.getText().toString().contentEquals(now.getText())) return false;
+        }
+        return true;
     }
 
     private final View.OnKeyListener inputTileKeys = (v, keyCode, event) -> {

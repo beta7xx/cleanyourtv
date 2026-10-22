@@ -346,19 +346,6 @@
                     android:drawableStart="@drawable/ic_settings"
                     android:nextFocusDown="@+id/grid" />
             </LinearLayout>
-            <!-- Inputs with something plugged in, one pill each under the gear (MainActivity.updateInputTiles). -->
-            <LinearLayout
-                android:id="@+id/inputTiles"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_below="@id/topButtons"
-                android:layout_alignParentEnd="true"
-                android:layout_marginTop="2dp"
-                android:orientation="vertical"
-                android:gravity="end"
-                android:clipChildren="false"
-                android:clipToPadding="false"
-                android:visibility="gone" />
         </RelativeLayout>
 
         <!-- The wrapper clips at the grid's edge; the grid itself must not clip so scaled tiles can overflow their cells. -->

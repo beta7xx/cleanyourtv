@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -20,8 +21,11 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
@@ -138,6 +142,9 @@ final class PlexBackdrop {
     /** Focus rests this long on a poster before its art is fetched: holding Right across the row fetches one, not thirty. */
     static final long ART_SETTLE_MS = 150;
 
+    /** The caption view in root: the Continue Watching row is stacked right above it. */
+    View caption() { return caption; }
+
     /** The Continue Watching row has focus: this item's art, undimmed, instead of the slideshow. */
     void showArt(String art) {
         main.removeCallbacks(slide);
@@ -209,7 +216,7 @@ final class PlexBackdrop {
         if (sections.length == 0) {
             all.addAll(get("/library/recentlyAdded"));
         } else {
-            for (String key : sectionKeys()) all.addAll(get("/library/sections/" + key + "/recentlyAdded"));
+            for (String key : sectionKeys(base, token, sections, null)) all.addAll(get("/library/sections/" + key + "/recentlyAdded"));
         }
         return merge(all);
     }
@@ -231,31 +238,45 @@ final class PlexBackdrop {
         }
     }
 
-    /** Library keys for the configured section titles, from /library/sections. */
-    private List<String> sectionKeys() {
+    /**
+     * Library keys for the configured section titles, from /library/sections, in config order. Shared with
+     * PlexContinue; titles (when not null) gets each matched name alongside its key.
+     */
+    static List<String> sectionKeys(String base, String token, String[] sections, List<String> titles) {
         List<String> keys = new ArrayList<>();
+        if (sections.length == 0) return keys;
+        Map<String, String> byTitle = new HashMap<>();
         try {
             HttpURLConnection c = open(base + "/library/sections?X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) {
                 SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
                     @Override
                     public void startElement(String uri, String local, String tag, Attributes a) {
-                        if (!"Directory".equals(tag)) return;
-                        for (String s : sections) if (s.equalsIgnoreCase(a.getValue("title")) && a.getValue("key") != null) keys.add(a.getValue("key"));
+                        if ("Directory".equals(tag) && a.getValue("title") != null && a.getValue("key") != null)
+                            byTitle.put(a.getValue("title").toLowerCase(Locale.ROOT), a.getValue("key"));
                     }
                 });
             } finally { c.disconnect(); }
         } catch (Exception ignored) { }
+        for (String s : sections) {
+            String key = byTitle.get(s.toLowerCase(Locale.ROOT));
+            if (key == null) continue;
+            keys.add(key);
+            if (titles != null) titles.add(s);
+        }
         return keys;
     }
 
-    private Bitmap fetchArt(String art) {
+    private Bitmap fetchArt(String art) { return transcode(base, token, art, W, H); }
+
+    /** A server image through Plex's transcoder at w x h, RGB_565 (about 1 MB at 960x540); null on any failure. */
+    static Bitmap transcode(String base, String token, String path, int w, int h) {
         try {
-            HttpURLConnection c = open(base + "/photo/:/transcode?width=" + W + "&height=" + H + "&minSize=1&upscale=1&url="
-                    + URLEncoder.encode(art, "UTF-8") + "&X-Plex-Token=" + token);
+            HttpURLConnection c = open(base + "/photo/:/transcode?width=" + w + "&height=" + h + "&minSize=1&upscale=1&url="
+                    + URLEncoder.encode(path, "UTF-8") + "&X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) {
                 BitmapFactory.Options o = new BitmapFactory.Options();
-                o.inPreferredConfig = Bitmap.Config.RGB_565;   // about 1 MB at 960x540
+                o.inPreferredConfig = Bitmap.Config.RGB_565;
                 return BitmapFactory.decodeStream(in, null, o);
             } finally { c.disconnect(); }
         } catch (Exception | OutOfMemoryError e) {
@@ -263,7 +284,7 @@ final class PlexBackdrop {
         }
     }
 
-    private static HttpURLConnection open(String url) throws Exception {
+    static HttpURLConnection open(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(4000);
         c.setReadTimeout(8000);

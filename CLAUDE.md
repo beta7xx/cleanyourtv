@@ -80,9 +80,13 @@ D-pad navigation, nothing TV-specific in code.
   opening via Plex's own `plex://watch/video?uri=server://...` link with one resend, ending this TV's
   server sessions on Home via the stopped timeline report) and the poster row view in two sizes with a
   tab strip of hubs (Continue Watching plus a Recently Added tab per `plex_sections` library, from Plex's
-  own `/hubs/promoted`). MainActivity decides when it shows: only while the Plex dock tile has focus,
-  replacing the hero name; Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). Server URL is in
-  config.xml, the token in `Settings.Global plex_token` on the TV, never in the repo. The device needs
+  own `/hubs/promoted`; an empty library tab keeps the strip and focus, only an emptied Continue Watching sends
+  focus back to the dock). Posters load on a two-thread pool, one request per poster; `PlexBackdrop` holds the
+  shared HTTP helpers (`open`, `transcode`, `sectionKeys`). MainActivity decides when it shows: only while the Plex dock tile has focus,
+  replacing the hero name; Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). Server URL and token
+  are on the TV, never in the repo: config.xml `plex_url`, else `Settings.Global plex_url`, else the first server
+  that answers Plex's LAN discovery (`PlexGdm`, retried on each resume until one answers, then `startPlex`
+  builds both views late); the token is `Settings.Global plex_token`, and without it nothing is fetched. The device needs
   Plex's Picture-in-Picture app-op denied so Home pauses playback (noted in the KD-49X8500F example).
 - **Focus (this fork).** One floating `GlassView` marks every focus on Home. Tiles place it from
   `onTileFocused`; any other focusable view opts in with `MainActivity.glassTarget(view, scale, radiusPx)`
@@ -91,7 +95,10 @@ D-pad navigation, nothing TV-specific in code.
   focus scale. Rows inside popup windows (Inputs menu, module cards) draw the same glass themselves via
   `input_row_bg`. No view keeps a white fill or dark text on focus.
 - **Inputs (this fork).** The Inputs menu shows a connection dot per HDMI port, and `updateInputTiles` adds
-  one pill under the gear per input with something plugged in (Down from the gear walks them). The state
+  one pill under the gear per input with something plugged in (Down from the gear walks them). The pills float
+  on root (`makeInputTiles`), placed under `topButtons` in code, not inside the header: in the header each pill
+  made it taller and plugging a cable moved the whole grid. A rebuild is skipped when the inputs and labels are
+  unchanged, and focus returns to the same input after one. The state
   comes from `TvInputManager`, except on TVs whose ports all claim connected (`hdmiStateBogus`): there a
   CEC device on the port counts, and on Sony BRAVIA the real cable state is read from Sony's exported
   provider `content://com.sony.dtv.tvinput.external.provider/sony_external_input` (`connect_state`),

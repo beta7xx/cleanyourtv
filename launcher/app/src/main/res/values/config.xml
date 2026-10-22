@@ -181,7 +181,9 @@
          Gregorian date. -->
     <bool name="shamsi_date">false</bool>
     <!-- Plex "Recently Added" backdrops behind the home screen (PlexBackdrop.java): server URL without a
-         trailing slash; empty = off. The X-Plex-Token is stored on the TV, not here:
+         trailing slash. Empty = `adb shell settings put global plex_url http://<server>:32400` on the TV, else
+         the first server that answers Plex's LAN discovery (GDM, PlexGdm.java). No token = off.
+         The X-Plex-Token is stored on the TV, never here:
          adb shell settings put global plex_token <token>   (Plex Web > any item > Get Info > View XML). -->
     <!-- For the Continue Watching row, deny Plex's Picture-in-Picture app-op once so Home pauses it: see
          examples/sony-kd-49x8500f/debloat.txt. -->

@@ -8,7 +8,7 @@
 #
 # Same firmware build as examples/sony-xbr-65x900f (US), identical package set minus com.sony.dtv.promos;
 # that list's notes apply here (ADB: USB debugging alone opens 5555, Sony Settings pages screencap empty).
-# Plex row (config.xml plex_url, token in `settings put global plex_token`): Plex's activity declares
+# Plex row (server found on the LAN, or `settings put global plex_url`; token in `settings put global plex_token`): Plex's activity declares
 # Picture-in-Picture and this set advertises it, so on Home Plex keeps playing in a service with no PiP
 # window. Deny the app-op once and Plex pauses on Home with its exact position:
 #   adb shell appops set com.plexapp.android PICTURE_IN_PICTURE ignore   (or Settings > Apps > Plex > PiP)

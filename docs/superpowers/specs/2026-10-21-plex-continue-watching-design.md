@@ -2,7 +2,7 @@
 
 Local branch only (`sony-kd-49x8500f`), not for upstream. TV: Sony KD-49X8500F, 1920x1080, density 320 (2 px per dp),
 Android TV 9, Plex for Android TV 2026.20.0 (React Native build, `tv.plex.app.MainActivity`), Plex server
-on the LAN at config.xml `plex_url`, token in `Settings.Global plex_token`.
+on the LAN (found by GDM, or config.xml / `Settings.Global plex_url`), token in `Settings.Global plex_token`.
 
 ## Intent
 
