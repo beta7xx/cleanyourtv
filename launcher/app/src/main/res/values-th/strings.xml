@@ -63,5 +63,6 @@
     </plurals>
     <string name="plex_recently_added">เพิ่งเพิ่ม: %1$s</string>
     <string name="plex_continue">ดูต่อ</string>
+    <string name="plex_recent_in">เพิ่มล่าสุดใน %1$s</string>
     <string name="greeting_with_name">%1$s %2$s</string>
 </resources>

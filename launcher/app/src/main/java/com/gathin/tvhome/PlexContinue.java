@@ -36,7 +36,10 @@ import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import javax.xml.parsers.SAXParserFactory;
@@ -113,24 +116,36 @@ final class PlexContinue {
     private int resendGen;
     private boolean large;
 
-    PlexContinue(Context ctx, Host host, String base, String token, float density) {
+    /** A hub the row can show: Continue Watching, or a library's Recently Added, as Plex's home lists them. */
+    static final class Tab {
+        final String title, key;
+        Tab(String title, String key) { this.title = title; this.key = key; }
+    }
+
+    private final String[] sections;
+    private List<Tab> tabs = new ArrayList<>();
+    private int tab;   // index into tabs; 0 is Continue Watching
+    private final LinearLayout tabsRow;
+
+    PlexContinue(Context ctx, Host host, String base, String token, String sections, float density) {
         this.ctx = ctx;
         this.host = host;
         this.base = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
         this.token = token;
+        this.sections = sections.trim().isEmpty() ? new String[0] : sections.split("\\s*,\\s*");
         this.density = density;
         row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setVisibility(View.GONE);
         row.setClipChildren(false);
         row.setClipToPadding(false);
-        TextView title = new TextView(ctx);
-        title.setText(R.string.plex_continue);
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(20);
-        title.setTypeface(ctx.getResources().getFont(R.font.outfit_medium));
-        title.setPadding(dp(EDGE), 0, 0, dp(8));   // plus the list's 6dp: Plex's 14dp from header to posters
-        row.addView(title);
+        // The hub tabs as Plex's home lists them, the current one white, the others dim; focusable from the posters.
+        tabsRow = new LinearLayout(ctx);
+        tabsRow.setOrientation(LinearLayout.HORIZONTAL);
+        tabsRow.setPadding(dp(EDGE), 0, 0, dp(8));   // plus the list's 6dp: Plex's 14dp from header to posters
+        tabs.add(new Tab(ctx.getString(R.string.plex_continue), "/hubs/continueWatching"));
+        buildTabs();
+        row.addView(tabsRow);
         list = new RecyclerView(ctx);
         list.setLayoutManager(new LinearLayoutManager(ctx, RecyclerView.HORIZONTAL, false));
         adapter.setHasStableIds(true);   // a refresh keeps the focused poster focused
@@ -166,15 +181,125 @@ final class PlexContinue {
     void setLarge(boolean large) {
         if (this.large == large) return;
         this.large = large;
+        if (!large && tab != 0) selectTab(0);   // the compact row above the dock is always Continue Watching
         // Rebind rather than resize the attached children only: posters parked in the view cache keep their
         // size otherwise and come back wrong. Stable ids keep the focused poster focused through it.
         adapter.notifyItemRangeChanged(0, items.size());
+        paintTabs();
     }
 
     private int posterW() { return dp(large ? LARGE_W : SMALL_W); }
     private int posterH() { return dp(large ? LARGE_H : SMALL_H); }
 
     View view() { return row; }
+
+    private void buildTabs() {
+        tabsRow.removeAllViews();
+        for (int i = 0; i < tabs.size(); i++) {
+            final int index = i;
+            TextView t = new TextView(ctx);
+            t.setText(tabs.get(i).title);
+            t.setTextSize(20);
+            t.setTypeface(ctx.getResources().getFont(R.font.outfit_medium));
+            t.setPadding(0, 0, dp(28), 0);
+            t.setFocusable(true);
+            t.setOnFocusChangeListener((v, focused) -> { if (focused) selectTab(index); paintTabs(); });
+            t.setOnKeyListener((v, keyCode, event) -> {
+                if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+                switch (keyCode) {
+                    case KeyEvent.KEYCODE_DPAD_LEFT: if (index > 0) tabsRow.getChildAt(index - 1).requestFocus(); return true;
+                    case KeyEvent.KEYCODE_DPAD_RIGHT: if (index < tabs.size() - 1) tabsRow.getChildAt(index + 1).requestFocus(); return true;
+                    case KeyEvent.KEYCODE_DPAD_DOWN: if (!focus()) host.onRowDown(); return true;
+                    case KeyEvent.KEYCODE_DPAD_UP: host.onRowUp(); return true;
+                    case KeyEvent.KEYCODE_BACK:
+                    case KeyEvent.KEYCODE_ESCAPE: host.onRowDown(); return true;
+                    default: return false;
+                }
+            });
+            tabsRow.addView(t);
+        }
+        paintTabs();
+    }
+
+    /** The current tab reads white, the others dim; the focused one gets an underline-like brighter white. */
+    private void paintTabs() {
+        for (int i = 0; i < tabsRow.getChildCount(); i++) {
+            TextView t = (TextView) tabsRow.getChildAt(i);
+            t.setTextColor(i == tab ? Color.WHITE : 0x80FFFFFF);
+            t.setAlpha(t.isFocused() || i == tab ? 1f : 0.9f);
+            t.setVisibility(large || i == tab ? View.VISIBLE : View.GONE);   // compact: one header, as before
+        }
+    }
+
+    private void selectTab(int index) {
+        if (index == tab) return;
+        tab = index;
+        lastFocused = 0;
+        paintTabs();
+        new Thread(this::loadRow, "plex-tab").start();
+    }
+
+    /**
+     * Plex's home hubs for the configured libraries (config.xml plex_sections), as the server titles them:
+     * "Recently Added in Anime". Fetched once per Home session, after Continue Watching.
+     */
+    private void loadTabs() {
+        List<String> keys = sectionKeys();
+        if (keys.isEmpty()) return;
+        List<Tab> fresh = new ArrayList<>();
+        fresh.add(tabs.get(0));
+        try {
+            HttpURLConnection c = open(base + "/hubs/promoted?contentDirectoryID=" + String.join(",", keys) + "&count=1&X-Plex-Token=" + token);
+            try (InputStream in = c.getInputStream()) {
+                SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+                    @Override public void startElement(String uri, String l, String tag, Attributes a) {
+                        String id = a.getValue("hubIdentifier");
+                        if ("Hub".equals(tag) && id != null && id.contains(".recentlyadded.") && a.getValue("key") != null && a.getValue("title") != null)
+                            fresh.add(new Tab(a.getValue("title"), a.getValue("key")));
+                    }
+                });
+            } finally { c.disconnect(); }
+        } catch (Exception e) { return; }
+        if (fresh.size() < 2) return;
+        // In the order plex_sections names the libraries, titled "Recently added in <library>" in the TV's language.
+        // A hub key names its library as sectionID=<key> (TV) or /library/sections/<key>/ (movies).
+        List<Tab> ordered = new ArrayList<>();
+        ordered.add(fresh.get(0));
+        for (int i = 0; i < keys.size(); i++) {
+            for (Tab t : fresh) {
+                if (!t.key.contains("sectionID=" + keys.get(i)) && !t.key.contains("/sections/" + keys.get(i) + "/")) continue;
+                ordered.add(new Tab(ctx.getString(R.string.plex_recent_in, sectionTitles.get(i)), t.key));
+            }
+        }
+        main.post(() -> { tabs = ordered; buildTabs(); });
+    }
+
+    /** Library keys for the configured section titles, from /library/sections. */
+    private final List<String> sectionTitles = new ArrayList<>();
+
+    /** Library keys for the configured section titles, in config order; sectionTitles gets the names alongside. */
+    private List<String> sectionKeys() {
+        List<String> keys = new ArrayList<>();
+        sectionTitles.clear();
+        if (sections.length == 0) return keys;
+        Map<String, String> byTitle = new HashMap<>();
+        try {
+            HttpURLConnection c = open(base + "/library/sections?X-Plex-Token=" + token);
+            try (InputStream in = c.getInputStream()) {
+                SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+                    @Override public void startElement(String uri, String local, String tag, Attributes a) {
+                        if ("Directory".equals(tag) && a.getValue("title") != null && a.getValue("key") != null)
+                            byTitle.put(a.getValue("title").toLowerCase(Locale.ROOT), a.getValue("key"));
+                    }
+                });
+            } finally { c.disconnect(); }
+        } catch (Exception ignored) { }
+        for (String s : sections) {
+            String key = byTitle.get(s.toLowerCase(Locale.ROOT));
+            if (key != null) { keys.add(key); sectionTitles.add(s); }
+        }
+        return keys;
+    }
 
     private int dp(int v) { return (int) (v * density); }
 
@@ -214,6 +339,7 @@ final class PlexContinue {
         new Thread(() -> {
             if (machine == null) machine = fetchMachine();
             loadRow();
+            if (tabs.size() < 2) loadTabs();
             // Plex reports "paused" with its exact position a moment after Home; ending the session before that
             // would store the last timeline ping's position instead and let the paused report re-register it.
             try { Thread.sleep(3000); } catch (InterruptedException ignored) { }
@@ -243,9 +369,10 @@ final class PlexContinue {
     }
 
     private void loadRow() {
-        List<Item> fresh = get("/hubs/continueWatching");
-        if (fresh != null && fresh.isEmpty()) fresh = get("/library/onDeck");
-        if (fresh == null) return;   // the server did not answer: keep what the row shows
+        final int forTab = tab;
+        List<Item> fresh = get(tabs.get(forTab).key);
+        if (forTab == 0 && fresh != null && fresh.isEmpty()) fresh = get("/library/onDeck");
+        if (fresh == null || forTab != tab) return;   // no answer, or the tab moved on: keep what the row shows
         loadedAt = System.currentTimeMillis();
         final List<Item> result = fresh;
         main.post(() -> {
@@ -254,6 +381,8 @@ final class PlexContinue {
             adapter.notifyDataSetChanged();
             row.setVisibility(items.isEmpty() ? View.GONE : shown ? View.VISIBLE : View.INVISIBLE);
             host.onItemsChanged();
+            // A tab switch while the row is large: the art and details follow the new list's first item.
+            if (large && forTab != 0 && !items.isEmpty()) { list.scrollToPosition(0); host.onItemFocused(items.get(0)); }
         });
     }
 
@@ -430,7 +559,9 @@ final class PlexContinue {
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
                 int pos = h.getBindingAdapterPosition();
                 switch (keyCode) {
-                    case KeyEvent.KEYCODE_DPAD_UP: host.onRowUp(); return true;
+                    case KeyEvent.KEYCODE_DPAD_UP:
+                        if (tabs.size() > 1) tabsRow.getChildAt(tab).requestFocus(); else host.onRowUp();
+                        return true;
                     case KeyEvent.KEYCODE_BACK:
                     case KeyEvent.KEYCODE_ESCAPE:
                     case KeyEvent.KEYCODE_DPAD_DOWN: host.onRowDown(); return true;
@@ -476,8 +607,10 @@ final class PlexContinue {
     /** The hub's items, or null when the request failed. */
     private List<Item> get(String path) {
         try {
-            HttpURLConnection c = open(base + path + "?X-Plex-Token=" + token);   // the whole hub, as Plex shows it
-            try (InputStream in = c.getInputStream()) { return parse(in); } finally { c.disconnect(); }
+            boolean onePerShow = !path.contains("continueWatching") && !path.contains("onDeck");
+            // A hub key may carry its own query (?type=2&sectionID=24); count= is the hub page size, Container-Size the library's.
+            HttpURLConnection c = open(base + path + (path.contains("?") ? "&" : "?") + "count=40&X-Plex-Container-Size=40&X-Plex-Token=" + token);
+            try (InputStream in = c.getInputStream()) { return parse(in, onePerShow); } finally { c.disconnect(); }
         } catch (Exception e) {
             return null;
         }
@@ -527,7 +660,13 @@ final class PlexContinue {
      * names. Items without any poster are skipped.
      */
     static List<Item> parse(InputStream in) throws Exception {
+        return parse(in, false);
+    }
+
+    /** onePerShow: a Recently Added hub lists every new episode; Plex shows one card per series, newest first. */
+    static List<Item> parse(InputStream in, boolean onePerShow) throws Exception {
         List<Item> out = new ArrayList<>();
+        Set<String> shows = new HashSet<>();
         SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
             String key, show, title, poster, art, summary, meta;
             int progress;
@@ -565,7 +704,8 @@ final class PlexContinue {
 
             @Override public void endElement(String uri, String local, String tag) {
                 if (!"Video".equals(tag) || key == null) return;
-                out.add(new Item(key, show, title, poster, art, summary, String.join(", ", cast), meta, progress));
+                if (!onePerShow || shows.add(poster))
+                    out.add(new Item(key, show, title, poster, art, summary, String.join(", ", cast), meta, progress));
                 key = null; cast = null;
             }
         });

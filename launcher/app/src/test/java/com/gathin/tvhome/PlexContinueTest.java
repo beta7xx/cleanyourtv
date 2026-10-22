@@ -107,4 +107,17 @@ public class PlexContinueTest {
         for (int i = 0; i < 25; i++) xml.append("<Video key=\"/library/metadata/").append(i).append("\" title=\"T").append(i).append("\" thumb=\"/t").append(i).append("\"/>");
         assertEquals(25, parse(xml.toString()).size());
     }
+
+    @Test
+    public void recentlyAddedCollapsesEpisodesToTheirShow() throws Exception {
+        String xml = "<MediaContainer><Hub>"
+                + "<Video key=\"/library/metadata/1\" title=\"E2\" grandparentTitle=\"Show\" grandparentThumb=\"/s\"/>"
+                + "<Video key=\"/library/metadata/2\" title=\"E1\" grandparentTitle=\"Show\" grandparentThumb=\"/s\"/>"
+                + "<Video key=\"/library/metadata/3\" title=\"Movie\" thumb=\"/m\"/>"
+                + "</Hub></MediaContainer>";
+        List<PlexContinue.Item> items = PlexContinue.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)), true);
+        assertEquals(2, items.size());
+        assertEquals("E2", items.get(0).title);   // the newest episode stands for the show
+        assertEquals(3, PlexContinue.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)), false).size());
+    }
 }

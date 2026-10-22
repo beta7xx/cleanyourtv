@@ -402,7 +402,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (!plexUrl.isEmpty() && plexToken != null && !plexToken.isEmpty()) {
             plex = new PlexBackdrop(this, root, plexUrl, plexToken, getString(R.string.plex_sections), density);
             // Continue Watching: shown while the Plex dock tile is focused, above the dock; Up grows it to Plex's size.
-            plexRow = new PlexContinue(this, plexHost, plexUrl, plexToken, density);
+            plexRow = new PlexContinue(this, plexHost, plexUrl, plexToken, getString(R.string.plex_sections), density);
             root.addView(plexRow.view(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         }
