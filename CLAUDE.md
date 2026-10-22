@@ -22,7 +22,7 @@ Launcher (needs JDK 17, Android SDK platform 34, build-tools 34.0.0; run from `l
 ```
 
 Release is R8-minified and signed with the debug key, so it installs over a debug build. CI fails a
-release APK over the size gate in `.github/workflows/ci.yml` (500 KB on this fork, 480 KB upstream; this fork's release is about 499 KB); the
+release APK over the size gate in `.github/workflows/ci.yml` (500 KB on this fork, 480 KB upstream; this fork's release is about 500.4 KB, 500,407 B); the
 launcher targets 1 GB TVs and sits within a few KB of the gate, so check the size after any addition:
 `stat -c %s app/build/outputs/apk/release/app-release.apk`.
 
@@ -46,7 +46,13 @@ tools/disable.sh examples/<model>/debloat.txt            # apply a list; tools/r
 tools/check.py examples/<model>/debloat.txt              # what a firmware update re-enabled
 ```
 
-In Git Bash on Windows, device paths given to adb need `MSYS_NO_PATHCONV=1` or they get rewritten.
+In Git Bash on Windows, device paths given to adb need `MSYS_NO_PATHCONV=1` or they get rewritten. Run the
+tools with the venv's interpreter (`tools/venv/Scripts/python.exe tools/tv.py ...`): the system Python lacks
+`adb_shell`. On Windows the Python suite has about 100 failures that are not real (the shell-script tests in
+`test_tvinput_guard`, `test_debloat_paths`, `test_adb_exposure`, `test_setupwraith_guard` and others, which flip
+between FAIL and ERROR run to run) plus one in `test_examples` (the Sony row differs between the two README
+tables); compare against `git stash` before blaming a change. Python scripts that edit repo files must write
+bytes (`open(p, 'wb')`): text mode on Windows turns the files' LF endings into CRLF.
 Verify launcher UI changes on the real TV with a screenshot; the emulator is not enough and CONTRIBUTING
 asks for a screenshot in launcher PRs.
 
@@ -62,19 +68,22 @@ D-pad navigation, nothing TV-specific in code.
   mistyped keys are ignored so a theme can never break Home. On-TV choices from Launcher settings sit
   above both until "Follow theme". `ThemeProvider` is a ContentProvider that lets the adb shell write
   theme files on firmware that locks Android/data.
-- **MainActivity** (large, ~2900 lines) owns the home screen: one RecyclerView `grid` whose first
+- **MainActivity** (large, ~3500 lines) owns the home screen: one RecyclerView `grid` whose first
   `COLUMNS` positions are the dock (drawn as a band by `DockDecoration`), the rest the app grid, and an
   optional footer row (`row_app_library.xml`: app library pill and reorder pill). Above the grid in the
   root FrameLayout sit the backdrop layers (sky, wallpaper, heroArt, ambient glow), the top shelf
   (`hero`: the focused dock app's name), and the single floating `GlassView` focus highlight that
   springs between tiles. The dock is "parked" by setting the grid's top padding so it sits near the
-  bottom; moving Down scrolls the grid. Up/Down/Left/Right are handled explicitly in
+  bottom; moving Down scrolls the grid. When the grid's height changes after start-up, the new top padding is
+  applied posted and `refitGlass(true)` re-parks the dock; nothing in the header may change its height at
+  runtime, or the grid moves (hence the floating input pills below). Up/Down/Left/Right are handled explicitly in
   `onTileVerticalKey` and the pill key listeners, not left to Android's focus finder.
 - **AppAdapter** builds the item list: configured dock apps first, then module cards, then the grid
   alphabetically, with `fill_dock` filling free dock slots from the grid or `DockSlots` inserting
   EMPTY entries. Tile geometry is derived from `DESIGN_W_DP/H_DP` and the column count
   (`tileWidthPx`); `TileFitTest` pins it. When the dock has fewer apps than slots the dock row is
-  translated to centre it (`dockShift`), and the band and glass add that translation.
+  translated to centre it (`dockShift`), and the band and glass add that translation. The dock has exactly
+  `columns` slots; this fork runs 4 columns (150dp tiles in a centred 736dp band) for its four dock apps.
 - **Plex (this fork).** `PlexBackdrop` shows the server's Recently Added art as a dimmed slideshow.
   `PlexContinue` is the Continue Watching row: it owns the data (hub fetch, SAX parsing into `Item`,
   opening via Plex's own `plex://watch/video?uri=server://...` link with one resend, ending this TV's
@@ -83,7 +92,9 @@ D-pad navigation, nothing TV-specific in code.
   own `/hubs/promoted`; an empty library tab keeps the strip and focus, only an emptied Continue Watching sends
   focus back to the dock). Posters load on a two-thread pool, one request per poster; `PlexBackdrop` holds the
   shared HTTP helpers (`open`, `transcode`, `sectionKeys`). MainActivity decides when it shows: only while the Plex dock tile has focus,
-  replacing the hero name; Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). Server URL and token
+  replacing the hero name; Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). The row's
+  left edge is pinned 11dp inside the clock's column (`plexEdge`), not to the band, so the column count does not
+  move it. Server URL and token
   are on the TV, never in the repo: config.xml `plex_url`, else `Settings.Global plex_url`, else the first server
   that answers Plex's LAN discovery (`PlexGdm`, retried on each resume until one answers, then `startPlex`
   builds both views late); the token is `Settings.Global plex_token`, and without it nothing is fetched. The device needs
@@ -121,7 +132,10 @@ git checkout sony-kd-49x8500f && git merge main                                 
 
 Expect conflicts in `MainActivity.java`, `config.xml` and the two `strings.xml` files, where the Plex row
 lives; keep both sides and keep this fork's `reorder_button`/`ambient_glow` values. GitHub's web merge
-cannot resolve these, so merge locally and push `sony-kd-49x8500f`. The fork's design and plan documents are in
+cannot resolve these, so merge locally and push `sony-kd-49x8500f`. The branch's history was rewritten once to
+remove a LAN address from `config.xml`; any future rewrite must exclude upstream's commits
+(`git filter-branch ... -- sony-kd-49x8500f ^<first fork commit>^ ^upstream/main`), or their hashes change and
+every later merge from upstream conflicts. In a filter-branch filter, `exit` ends filter-branch itself. The fork's design and plan documents are in
 `docs/superpowers/specs/` and `docs/superpowers/plans/`; `shots/` holds TV screenshots and is not committed.
 
 ## Conventions worth knowing
