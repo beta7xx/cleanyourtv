@@ -67,6 +67,8 @@ final class PlexContinue {
         void onItemFocused(Item item);
         /** The list was (re)loaded: the host re-places or hides the row for the tile that has focus. */
         void onItemsChanged();
+        /** The focused poster or tab moved under the glass (the list scrolled, the row resized): follow it. */
+        void onFocusMoved(View v);
         void onRowUp();
         void onRowDown();
     }
@@ -153,6 +155,9 @@ final class PlexContinue {
         adapter.setHasStableIds(true);   // a refresh keeps the focused poster focused
         list.setItemAnimator(null);      // a size switch rebinds every poster: no cross-fade between two sizes
         list.setAdapter(adapter);
+        list.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override public void onScrolled(RecyclerView rv, int dx, int dy) { host.onFocusMoved(rv.findFocus()); }
+        });
         list.setClipToPadding(false);
         list.setClipChildren(false);
         // 6dp above and below: room for the focus scale and stroke.
@@ -188,6 +193,7 @@ final class PlexContinue {
         // size otherwise and come back wrong. Stable ids keep the focused poster focused through it.
         adapter.notifyItemRangeChanged(0, items.size());
         paintTabs();
+        list.post(() -> host.onFocusMoved(row.findFocus()));   // the posters resized under the glass
     }
 
     private int posterW() { return dp(large ? LARGE_W : SMALL_W); }
@@ -206,7 +212,7 @@ final class PlexContinue {
             t.setPadding(dp(14), dp(4), dp(14), dp(6));
             t.setIncludeFontPadding(true);   // Thai marks above the x-height need the font's own top padding
             t.setFocusable(true);
-            t.setBackgroundResource(R.drawable.plex_tab_bg);   // the pills' glass when focused, nothing otherwise
+            MainActivity.glassTarget(t, 1f, dp(21));   // the floating glass marks the focused tab
             t.setOnFocusChangeListener((v, focused) -> { if (focused) selectTab(index); paintTabs(); });
             t.setOnKeyListener((v, keyCode, event) -> {
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
@@ -229,7 +235,7 @@ final class PlexContinue {
     private void paintTabs() {
         for (int i = 0; i < tabsRow.getChildCount(); i++) {
             TextView t = (TextView) tabsRow.getChildAt(i);
-            t.setTextColor(t.isFocused() ? 0xFF111111 : i == tab ? Color.WHITE : 0x80FFFFFF);
+            t.setTextColor(t.isFocused() || i == tab ? Color.WHITE : 0x80FFFFFF);
             t.setAlpha(1f);
             t.setVisibility(large || i == tab ? View.VISIBLE : View.GONE);   // compact: one header, as before
         }
@@ -565,6 +571,7 @@ final class PlexContinue {
             blp.setMargins(dp(8), 0, 0, dp(8));
             card.addView(bar, blp);
             Holder h = new Holder(item, card, image, bar, track, show, title, episode);
+            MainActivity.glassTarget(card, 1.04f, dp(6) * 1.04f);
             h.frame.setCornerRadius(dp(6));
             h.frame.setColor(Color.TRANSPARENT);
             card.setForeground(h.frame);   // the stroke draws over the poster, clipped with it
@@ -575,7 +582,6 @@ final class PlexContinue {
                 }
             });
             card.setOnFocusChangeListener((view, focused) -> {
-                h.frame.setStroke(focused ? Math.round(1.5f * density) : 0, Color.WHITE);
                 view.animate().scaleX(focused ? 1.04f : 1f).scaleY(focused ? 1.04f : 1f).setDuration(120).start();
                 if (focused) {
                     int pos = h.getBindingAdapterPosition();

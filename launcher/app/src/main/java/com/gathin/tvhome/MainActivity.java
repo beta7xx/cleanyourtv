@@ -142,7 +142,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private final PlexContinue.Host plexHost = new PlexContinue.Host() {
         @Override public void onItemFocused(PlexContinue.Item item) { enterPlexLarge(); if (plex != null) plex.showArt(item.art); }
         @Override public void onItemsChanged() { refreshPlexRow(); }
-        @Override public void onRowUp() { leavePlexLarge(); plexRow.setShown(false); firstTopButton().requestFocus(); }
+        @Override public void onFocusMoved(View v) { if (v != null) glassTo(v); }
+        // The pill takes focus first: shrinking and hiding the row rebinds its posters, and RecyclerView's focus
+        // recovery would otherwise hand focus to the nearest dock tile.
+        @Override public void onRowUp() { firstTopButton().requestFocus(); leavePlexLarge(); plexRow.setShown(false); }
         @Override public void onRowDown() { leavePlexLarge(); focusTile(plexDockPosition()); }
     };
     /** The top shelf: heroName, plus the cinematic shelf's "Last opened" line and dock position dots. */
@@ -704,6 +707,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnWifi.setOnKeyListener(pillKeys);
         btnSettings.setOnKeyListener(pillKeys);
         btnLibraryTop.setOnKeyListener(pillKeys);
+        for (View b : new View[]{btnInputs, btnWifi, btnLibraryTop, btnSettings}) glassTarget(b, advancedEffects ? 1.04f : 1f, 21 * density);
         if (advancedEffects) {
             for (View button : new View[]{btnInputs, btnWifi, btnLibraryTop, btnSettings}) {
                 button.setOnFocusChangeListener((view, focused) -> view.animate()
@@ -716,7 +720,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // Hide the glass when focus leaves the tiles.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
             boolean onTile = newF != null && newF.getId() == R.id.card;
-            if (!onTile) hideGlass();
+            if (newF != null && newF.getTag(R.id.glass_target) != null) glassTo(newF);
+            else if (!onTile) hideGlass();
         });
 
         packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -1489,24 +1494,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         r.set(0, 0, card.getWidth(), card.getHeight());
         root.offsetDescendantRectToMyCoords(card, r);
         r.offset(Math.round(((View) card.getParent()).getTranslationX()), 0);   // a centred dock's shift (not in layout coords)
-        float pad = 6f * density;        // matches GlassView's glow inset
         float scale = adapter.focusScale();
-        float w = card.getWidth() * scale + 2 * pad;
-        float h = card.getHeight() * scale + 2 * pad;
-        float x = r.exactCenterX() - w / 2f;
-        float y = r.exactCenterY() - h / 2f - (advancedEffects ? 4f * density : 0f);
-
-        ViewGroup.LayoutParams lp = glass.getLayoutParams();
-        if (lp.width != (int) w || lp.height != (int) h || card.getWidth() != glassCardW) {
-            lp.width = (int) w;
-            lp.height = (int) h;
-            glass.setLayoutParams(lp);
-            // GlassView draws its slab inset by pad, i.e. exactly over the zoomed tile: same corners as the tile.
-            glass.setRadius(AppAdapter.cornerRadius(card.getWidth(), density) * scale);
-        }
         glassCardW = card.getWidth();
-        glassTargetX = x;
-        glassTargetY = y;
         // Cinematic shelf: the highlight glows in the dock app's colour, plain white in the grid. app_glow: every tile.
         boolean coloured = (appGlow || cinematic && position < COLUMNS) && !festive;
         int accent = coloured ? adapter.ambientColorAt(position) : 0;
@@ -1514,23 +1503,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             glassAccent = accent;
             glass.setAccent(accent);
         }
-        if (!glassShown) {
-            springX.cancel();
-            springY.cancel();
-            glass.setTranslationX(x);
-            glass.setTranslationY(y);
-            if (animations && !reducedMotion) glass.animate().alpha(1f).setDuration(180).start();
-            else glass.setAlpha(1f);
-            glassShown = true;
-        } else if (!animations) {
-            springX.cancel();
-            springY.cancel();
-            glass.setTranslationX(x);
-            glass.setTranslationY(y);
-        } else {
-            springX.animateToFinalPosition(x);
-            springY.animateToFinalPosition(y - glassScrollShift);
-        }
+        placeGlass(r, scale, AppAdapter.cornerRadius(card.getWidth(), density) * scale, advancedEffects ? 4f * density : 0f);
         View item = (View) card.getParent();
         if (dockRow && position < COLUMNS) {
             // Dock: park it at the bottom of the screen and show the top shelf for this app.
@@ -1549,9 +1522,65 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // fade out left the grid on plain black.
             showGlowOnly(position);
             // Scroll just enough so the whole glass (not only the tile) is visible.
-            revealRect.set(0, -(int) pad * 2, item.getWidth(), item.getHeight() + (int) pad);
+            int pad = Math.round(6f * density);   // GlassView's glow inset
+            revealRect.set(0, -pad * 2, item.getWidth(), item.getHeight() + pad);
             grid.requestChildRectangleOnScreen(item, revealRect, reducedMotion);
         }
+    }
+
+    /**
+     * Springs the glass over a rect in root coordinates, sized for the view's focus scale with GlassView's 6dp glow
+     * inset around it, lifted by `lift`. The one highlight on the screen: tiles, pills, posters and tabs all use it.
+     */
+    private void placeGlass(Rect r, float scale, float radiusPx, float lift) {
+        float pad = 6f * density;        // matches GlassView's glow inset
+        float w = r.width() * scale + 2 * pad;
+        float h = r.height() * scale + 2 * pad;
+        float x = r.exactCenterX() - w / 2f;
+        float y = r.exactCenterY() - h / 2f - lift;
+        ViewGroup.LayoutParams lp = glass.getLayoutParams();
+        if (lp.width != (int) w || lp.height != (int) h) {
+            lp.width = (int) w;
+            lp.height = (int) h;
+            glass.setLayoutParams(lp);
+        }
+        glass.setRadius(radiusPx);
+        glassTargetX = x;
+        glassTargetY = y;
+        if (!glassShown) {
+            springX.cancel();
+            springY.cancel();
+            glass.setTranslationX(x);
+            glass.setTranslationY(y);
+            if (animations && !reducedMotion) glass.animate().alpha(1f).setDuration(180).start();
+            else glass.setAlpha(1f);
+            glassShown = true;
+        } else if (!animations) {
+            springX.cancel();
+            springY.cancel();
+            glass.setTranslationX(x);
+            glass.setTranslationY(y);
+        } else {
+            springX.animateToFinalPosition(x);
+            springY.animateToFinalPosition(y - glassScrollShift);
+        }
+    }
+
+    /** Marks a focusable view as a stop for the glass: its focus scale and corner radius (px). */
+    static void glassTarget(View v, float scale, float radiusPx) { v.setTag(R.id.glass_target, new float[]{scale, radiusPx}); }
+
+    /** The glass travels to a tagged view (a pill, a poster, a tab); a plain white slab, no app colour. */
+    private void glassTo(View v) {
+        float[] t = (float[]) v.getTag(R.id.glass_target);
+        if (t == null) return;
+        if (v.getWidth() == 0) { v.post(() -> { if (v.isFocused()) glassTo(v); }); return; }
+        Rect r = tileRect;
+        r.set(0, 0, v.getWidth(), v.getHeight());
+        root.offsetDescendantRectToMyCoords(v, r);
+        // Layout positions only: add the translations on the way up (the Plex row is placed with setY).
+        for (View p = v; p != null && p != root; p = (View) p.getParent()) r.offset(Math.round(p.getTranslationX()), Math.round(p.getTranslationY()));
+        if (glassAccent != 0) { glassAccent = 0; glass.setAccent(festive ? festival.accentColor() : 0); }
+        placeGlass(r, t[0], t[1], 0f);
     }
 
     /** Refits the glass to the focused holder once the grid layout and tile dimensions settle. */
@@ -1634,7 +1663,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void enterPlexLarge() {
         if (plexLarge || plexRow == null) return;
         plexLarge = true;
-        hideGlass();
         plexRow.setLarge(true);
         plexRow.setShown(true);
         View v = plexRow.view();
@@ -2239,7 +2267,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     @Override public void onLibraryFocused() {
         libraryFocusPending = false;
-        hideGlass();
         hideHero();
     }
 
@@ -2700,6 +2727,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 pill.setText(label);
                 pill.setOnClickListener(v -> openInput(id));
                 pill.setOnKeyListener(inputTileKeys);
+                glassTarget(pill, 1f, 21 * density);
                 inputTiles.addView(pill);
             }
         }

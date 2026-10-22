@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- View tag: float[]{focus scale, corner radius px}. A focusable view carrying it is a stop for the floating glass
+         highlight (MainActivity.glassTo), like a tile: the top pills, the Plex posters and tabs, the footer pills. -->
+    <item name="glass_target" type="id" />
+</resources>

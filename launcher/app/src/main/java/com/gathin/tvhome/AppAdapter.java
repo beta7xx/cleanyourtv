@@ -412,6 +412,9 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             View row = LayoutInflater.from(ctx).inflate(R.layout.row_app_library, parent, false);
             View button = row.findViewById(R.id.btnLibrary);
             View reorder = row.findViewById(R.id.btnReorderFooter);
+            float density = ctx.getResources().getDisplayMetrics().density;
+            MainActivity.glassTarget(button, 1f, 21 * density);
+            MainActivity.glassTarget(reorder, 1f, 21 * density);
             reorder.setVisibility(reorderButton ? View.VISIBLE : View.GONE);
             reorder.setActivated(reordering);
             footerReorder = reorder;

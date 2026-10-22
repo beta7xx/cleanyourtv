@@ -12,6 +12,10 @@ focus and grows to the Plex app's own poster size when focus moves up into it.
 
 ## Depth and spacing
 
+- Focus: one highlight for the whole screen. The floating glass slab (`GlassView`, springs on X/Y) marks
+  every focused thing: tiles, the top and input pills, the footer pills, the Plex posters and hub tabs. A view
+  joins it with `MainActivity.glassTarget(view, focusScale, radiusPx)` (pills 1.0 or 1.04 / 21dp, posters
+  1.04 / 6dp). No view draws its own focus fill, stroke or dark-text state; the glass is the focus.
 - Depth: one strategy, frosted glass. The dock band is the pills' glass (`dock_glass`: white 14% fading to
   5%, 1dp edge at 22% white, 26dp radius, 14dp pad around the tiles); the focus highlight is the single
   floating glass slab. No shadows, no borders on tiles.
