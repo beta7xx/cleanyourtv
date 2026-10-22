@@ -1587,8 +1587,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         int[] vw = new int[2], rw = new int[2];
         v.getLocationInWindow(vw);
         root.getLocationInWindow(rw);
+        // The window position is of the scaled view (a focused poster is mid-way to 1.04 when this runs) while the
+        // size is the layout's: undo the scale about the centre so the glass is centred on the view, not offset.
+        float sx = v.getScaleX(), sy = v.getScaleY();
+        int left = Math.round(vw[0] - rw[0] + (sx - 1f) * v.getWidth() / 2f);
+        int top = Math.round(vw[1] - rw[1] + (sy - 1f) * v.getHeight() / 2f);
         Rect r = tileRect;
-        r.set(vw[0] - rw[0], vw[1] - rw[1], vw[0] - rw[0] + v.getWidth(), vw[1] - rw[1] + v.getHeight());
+        r.set(left, top, left + v.getWidth(), top + v.getHeight());
         if (glassAccent != 0) { glassAccent = 0; glass.setAccent(festive ? festival.accentColor() : 0); }
         placeGlass(r, t[0], t[1], 0f);
     }
