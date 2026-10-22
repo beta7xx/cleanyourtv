@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- A focused menu row wears the same glass as GlassView (fill 24% fading to 7%, 1.5dp white rim): the popup is
+     its own window, so the floating slab cannot travel into it. -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_focused="true">
         <shape android:shape="rectangle">
-            <solid android:color="#F5FFFFFF" />
+            <gradient android:angle="270" android:startColor="#3DFFFFFF" android:endColor="#12FFFFFF" />
+            <stroke android:width="1.5dp" android:color="#CCFFFFFF" />
             <corners android:radius="13dp" />
         </shape>
     </item>
