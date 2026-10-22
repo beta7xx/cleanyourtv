@@ -1630,6 +1630,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
+    /**
+     * The Plex row's left edge in root coordinates: 11dp inside the clock's column, where it sat when 5 columns
+     * stretched the band edge to edge. Fixed there rather than following the band, so a column count that
+     * narrows the band does not move the row.
+     */
+    private int plexEdge() {
+        Rect r = new Rect();
+        root.offsetDescendantRectToMyCoords(findViewById(R.id.leftBlock), r);
+        return r.left + Math.round(11 * density);
+    }
+
     /** The band's left and right edges in root coordinates, once known; the shelf text lines up with them. */
     private int shelfLeft = -1, shelfRight = -1;
 
@@ -1644,7 +1655,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // launcher lays out left to right only (no supportsRtl).
             ((ViewGroup.MarginLayoutParams) hero.getLayoutParams()).leftMargin = bandLeft + inset;
             hero.requestLayout();
-            if (plexRow != null) plexRow.setEdge(bandLeft + inset);
+            if (plexRow != null) plexRow.setEdge(plexEdge());
             if (plex != null) plex.setEndMargin(root.getWidth() - bandRight + inset);
         });
     }
@@ -1663,7 +1674,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         if (shelfLeft >= 0) {   // found after the first layout: line it up with the band now, as alignShelf does
             int inset = Math.round(12 * density);
-            plexRow.setEdge(shelfLeft + inset);
+            plexRow.setEdge(plexEdge());
             plex.setEndMargin(root.getWidth() - shelfRight + inset);
         }
         if (resumed) { plex.start(); plexRow.start(); }

@@ -33,7 +33,7 @@ focus and grows to the Plex app's own poster size when focus moves up into it.
 | Band width | 736dp at 4 columns, centred (848dp edge to edge at 5, on the clock's margin) |
 | Dock bottom | 24dp of band above the screen's bottom edge (`dockNameRoom` 44dp: the dock's unused name room is let below the bottom room; `BOTTOM_ROOM_DP` stays 30 for themes) |
 | Dock with fewer apps than slots | tiles translate by half the free slots' width (`AppAdapter.dockShift`); band and glass follow; the footer row never shifts |
-| Shelf inset | hero name, Plex row header and posters, details block and the Recently Added caption all start 12dp inside the band's edge (`alignShelf`) |
+| Shelf inset | hero name and the Recently Added caption start 12dp inside the band's edge (`alignShelf`); the Plex row header and posters start 11dp inside the clock's column (`plexEdge`), fixed whatever the column count |
 | Footer | library pill + reorder pill (icon-only), centred, 10dp apart, 84dp row |
 
 ## Type scale (Outfit)
