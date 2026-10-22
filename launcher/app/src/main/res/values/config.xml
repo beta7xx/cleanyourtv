@@ -209,7 +209,7 @@
     <!-- The dock band as light frosted glass, like the Inputs, Wi-Fi and Settings pills, so a sky or wallpaper shows
          through it. false (the default) keeps the solid near-black band, or the cinematic shelf's dark glass. Can
          also be set with "dock_glass": true in a theme's config.json. -->
-    <bool name="dock_glass">false</bool>
+    <bool name="dock_glass">true</bool>
     <!-- A reorder button (two arrows) in the top bar. Off by default: reordering is also in the Settings
          button's long-press menu, so it needs no extra button on screen. -->
     <bool name="reorder_button">true</bool>
