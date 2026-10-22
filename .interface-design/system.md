@@ -74,5 +74,5 @@ Details block line gaps: title → episode 8, → meta 8, → summary 14, → ca
 
 ## Budget
 
-Release APK gate on this fork: 460 KB (`.github/workflows/ci.yml`, 471,040 bytes); upstream gates at 440.
-Current release: about 451 KB.
+Release APK gate on this fork: 500 KB (`.github/workflows/ci.yml`, 512,000 bytes); upstream gates at 480.
+Current release: about 495 KB.

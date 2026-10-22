@@ -22,7 +22,7 @@ Launcher (needs JDK 17, Android SDK platform 34, build-tools 34.0.0; run from `l
 ```
 
 Release is R8-minified and signed with the debug key, so it installs over a debug build. CI fails a
-release APK over the size gate in `.github/workflows/ci.yml` (460 KB on this fork, 440 KB upstream); the
+release APK over the size gate in `.github/workflows/ci.yml` (500 KB on this fork, 480 KB upstream); the
 launcher targets 1 GB TVs and sits within a few KB of the gate, so check the size after any addition:
 `stat -c %s app/build/outputs/apk/release/app-release.apk`.
 
@@ -111,3 +111,7 @@ cannot resolve these, so merge locally and push `local`. The fork's design and p
   Anything touching Android views is verified on the TV, not unit-tested.
 - Comments in the launcher explain the why and the TV that motivated a quirk (often with an issue
   number); keep that style.
+
+The guide for every coding agent in this repo is AGENTS.md, imported below.
+
+@AGENTS.md
