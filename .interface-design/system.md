@@ -12,9 +12,9 @@ focus and grows to the Plex app's own poster size when focus moves up into it.
 
 ## Depth and spacing
 
-- Depth: one strategy, tone steps. The dock band is a darker rounded slab (`DockDecoration`, 26dp radius,
-  14dp pad around the tiles, 1dp edge line); the focus highlight is the single floating glass slab. No
-  shadows, no borders on tiles.
+- Depth: one strategy, frosted glass. The dock band is the pills' glass (`dock_glass`: white 14% fading to
+  5%, 1dp edge at 22% white, 26dp radius, 14dp pad around the tiles); the focus highlight is the single
+  floating glass slab. No shadows, no borders on tiles.
 - Spacing base: 4dp. Section gaps are deliberately larger than in-group gaps (see rhythm below).
 - Density decision: in-group gap 14dp (header to posters, poster to poster), group gap 28dp (posters to
   dock band), tile gap 27dp.
