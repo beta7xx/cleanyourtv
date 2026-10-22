@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One connected input under the gear (MainActivity.updateInputTiles): the same pill as the top bar. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/TopButton"
+    android:layout_marginTop="8dp"
+    android:drawableStart="@drawable/ic_input" />

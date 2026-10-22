@@ -300,6 +300,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         public void onInputRemoved(String inputId) {
             updateInputsButton();
         }
+
+        @Override
+        public void onInputStateChanged(String inputId, int state) {
+            updateInputsButton();
+        }
     };
     /** Listens for any VPN coming up or going down, even one this app's traffic is excluded from. */
     private final ConnectivityManager.NetworkCallback vpnCallback = new ConnectivityManager.NetworkCallback() {
@@ -622,6 +627,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
 
         btnInputs = findViewById(R.id.btnInputs);
+        inputTiles = findViewById(R.id.inputTiles);
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
         btnWifi.setOnClickListener(v -> openNetworkPill());
@@ -685,6 +691,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
             if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return true;
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (v.getId() == R.id.btnSettings && inputTiles.getChildCount() > 0) {
+                    inputTiles.getChildAt(0).requestFocus();
+                    return true;
+                }
                 // Back to the dock tile Up came from, not wherever the focus finder lands.
                 focusTile(lastFocused % COLUMNS);
                 return true;
@@ -2650,7 +2660,85 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     /** Hides the Inputs pill when it would have nothing to list: streaming boxes have no HDMI-in, AV or tuner. */
+    private LinearLayout inputTiles;
+
+    /**
+     * One pill under the gear per input with something on it, so a plugged-in console or box is one click away
+     * without opening the Inputs menu. A CEC device on a port counts as plugged in; a bare HDMI port counts only
+     * when the TV's port states can be trusted (see hdmiStateBogus). Up/Down walk the pills between the gear and
+     * the dock; Left/Right stay put.
+     */
+    private void updateInputTiles() {
+        boolean hadFocus = inputTiles.hasFocus();
+        inputTiles.removeAllViews();
+        TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+        if (tim != null) {
+            List<TvInputInfo> inputs = tim.getTvInputList();
+            Set<String> ids = new HashSet<>();
+            for (TvInputInfo info : inputs) ids.add(info.getId());
+            Set<String> portsWithDevice = new HashSet<>();
+            for (TvInputInfo info : inputs)
+                if (info.isPassthroughInput() && info.getParentId() != null && ids.contains(info.getParentId())) portsWithDevice.add(info.getParentId());
+            boolean bogus = hdmiStateBogus(tim, inputs, ids);
+            for (TvInputInfo info : inputs) {
+                if (!info.isPassthroughInput() || info.isHidden(this) || info.getType() != TvInputInfo.TYPE_HDMI) continue;
+                if (Integer.valueOf(-1).equals(mappedSource(info.getId()))) continue;
+                boolean cec = info.getParentId() != null && ids.contains(info.getParentId());
+                if (!cec && (bogus || portsWithDevice.contains(info.getId())
+                        || tim.getInputState(info.getId()) != TvInputManager.INPUT_STATE_CONNECTED)) continue;
+                CharSequence name = info.loadCustomLabel(this);
+                if (name == null || name.length() == 0) name = info.loadLabel(this);
+                String label = name == null ? info.getId() : name.toString();
+                if (!cec && !label.toUpperCase(Locale.ROOT).contains("HDMI")) label = "HDMI " + label;
+                final String id = info.getId();
+                TextView pill = (TextView) getLayoutInflater().inflate(R.layout.pill_input, inputTiles, false);
+                pill.setText(label);
+                pill.setOnClickListener(v -> openInput(id));
+                pill.setOnKeyListener(inputTileKeys);
+                inputTiles.addView(pill);
+            }
+        }
+        int count = inputTiles.getChildCount();
+        inputTiles.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+        if (hadFocus && count == 0) findViewById(R.id.btnSettings).requestFocus();
+    }
+
+    private final View.OnKeyListener inputTileKeys = (v, keyCode, event) -> {
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+        int i = inputTiles.indexOfChild(v);
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_DPAD_UP:
+                (i > 0 ? inputTiles.getChildAt(i - 1) : findViewById(R.id.btnSettings)).requestFocus();
+                return true;
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+                if (i < inputTiles.getChildCount() - 1) inputTiles.getChildAt(i + 1).requestFocus();
+                else focusTile(lastFocused % COLUMNS);
+                return true;
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                return true;
+            default:
+                return false;
+        }
+    };
+
+    /**
+     * Some TVs (Sony) report every HDMI port as connected whether or not anything is plugged in, so the HDMI
+     * states mean nothing there. A TV with every port really in use is misread too; a CEC device still counts.
+     */
+    private static boolean hdmiStateBogus(TvInputManager tim, List<TvInputInfo> inputs, Set<String> ids) {
+        int hdmiPorts = 0, hdmiConnected = 0;
+        for (TvInputInfo info : inputs) {
+            if (!info.isPassthroughInput() || info.getType() != TvInputInfo.TYPE_HDMI) continue;
+            if (info.getParentId() != null && ids.contains(info.getParentId())) continue;
+            hdmiPorts++;
+            if (tim.getInputState(info.getId()) == TvInputManager.INPUT_STATE_CONNECTED) hdmiConnected++;
+        }
+        return hdmiPorts > 1 && hdmiConnected == hdmiPorts;
+    }
+
     private void updateInputsButton() {
+        updateInputTiles();
         if (!showInputsPill) {
             btnInputs.setVisibility(View.GONE);
             return;
@@ -2829,16 +2917,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 if (onPort == null) cecDevices.put(parent, onPort = new ArrayList<>());
                 onPort.add(info);
             }
-            // Some TVs (Sony) report every HDMI port as connected whether or not anything is plugged in,
-            // so drop the HDMI status then. A TV with every port really in use loses it too.
-            int hdmiPorts = 0, hdmiConnected = 0;
-            for (TvInputInfo info : inputs) {
-                if (!info.isPassthroughInput() || info.getType() != TvInputInfo.TYPE_HDMI) continue;
-                if (info.getParentId() != null && inputIds.contains(info.getParentId())) continue;
-                hdmiPorts++;
-                if (tim.getInputState(info.getId()) == TvInputManager.INPUT_STATE_CONNECTED) hdmiConnected++;
-            }
-            boolean hdmiStateBogus = hdmiPorts > 1 && hdmiConnected == hdmiPorts;
+            boolean hdmiStateBogus = hdmiStateBogus(tim, inputs, inputIds);
             for (TvInputInfo info : inputs) {
                 if (info.getType() == TvInputInfo.TYPE_TUNER
                         && (info.getServiceInfo().applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0
@@ -2885,7 +2964,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                         if (name == null || name.length() == 0) name = named ? custom : device.loadLabel(this);
                         String deviceLabel = name == null || name.length() == 0 ? label : name + " \u00B7 " + label;
                         final String deviceId = device.getId();
-                        int state = hdmiStateBogus ? -1 : tim.getInputState(deviceId);
+                        // The device answered over CEC, so something is on the port even when the TV's states are bogus.
+                        int state = hdmiStateBogus ? TvInputManager.INPUT_STATE_CONNECTED : tim.getInputState(deviceId);
                         addInputRow(rows, popup, R.drawable.ic_input, deviceLabel, state, () -> openInput(deviceId));
                     }
                     continue;
