@@ -91,12 +91,14 @@ D-pad navigation, nothing TV-specific in code.
   tab strip of hubs (Continue Watching plus a Recently Added tab per `plex_sections` library, from Plex's
   own `/hubs/promoted`; an empty library tab keeps the strip and focus, only an emptied Continue Watching sends
   focus back to the dock). Posters load on a two-thread pool, one request per poster; `PlexBackdrop` holds the
-  shared HTTP helpers (`open`, `transcode`, `sectionKeys`). MainActivity decides when it shows: only while the Plex dock tile has focus,
-  replacing the hero name; Up grows it and slides the grid down (`enterPlexLarge`/`leavePlexLarge`). The row's
-  left edge is pinned 11dp inside the clock's column (`plexEdge`), not to the band, so the column count does not
-  move it. Server URL and token
+  shared HTTP helpers (`open`, `transcode`, `sectionKeys`). `PlexShelf` owns both on Home, so MainActivity (upstream's
+  file) only calls it at a few points (resume/pause, `showRow` from the dock focus, `focusRow` on Up, `hide`,
+  `onGridScrolled`) and answers its four-method `Host`. The row shows only while the Plex dock tile has focus,
+  replacing the hero name; Up grows it and slides the grid down (`enterLarge`/`leaveLarge`). The row's
+  left edge is pinned 11dp inside the clock's column (MainActivity's `plexEdge`), not to the band, so the column
+  count does not move it. Server URL and token
   are on the TV, never in the repo: config.xml `plex_url`, else `Settings.Global plex_url`, else the first server
-  that answers Plex's LAN discovery (`PlexGdm`, retried on each resume until one answers, then `startPlex`
+  that answers Plex's LAN discovery (`PlexGdm`, retried on each resume until one answers, then `PlexShelf.build`
   builds both views late); the token is `Settings.Global plex_token`, and without it nothing is fetched. The device needs
   Plex's Picture-in-Picture app-op denied so Home pauses playback (noted in the KD-49X8500F example).
 - **Focus (this fork).** One floating `GlassView` marks every focus on Home. Tiles place it from

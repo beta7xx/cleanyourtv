@@ -136,25 +136,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private GlassView glass;
     private View ambient;
     private TextView heroName;
-    private PlexBackdrop plex;   // null unless config.xml plex_url is set
-    private PlexContinue plexRow;
-    /** The Continue Watching row has focus: posters at the Plex app's size, the dock slid down, details and art up. */
-    private boolean plexLarge;
-    private View plexScrim;
-    private final PlexContinue.Host plexHost = new PlexContinue.Host() {
-        @Override public void onItemFocused(PlexContinue.Item item) { enterPlexLarge(); if (plex != null) plex.showArt(item.art); }
-        @Override public void onItemsChanged() { refreshPlexRow(); }
-        @Override public void onFocusMoved(View v) { if (v != null) glassTo(v); }
-        // The first pill (Inputs when shown) takes focus first; the row's shrink then rebinds posters that no longer
-        // hold focus, so RecyclerView's focus recovery has nothing to recover and the glass stays on the pill.
-        @Override public void onRowUp() {
+    /** This fork's Plex backdrop and Continue Watching row (PlexShelf); set in onCreate, idle without a token. */
+    private PlexShelf plex;
+    private final PlexShelf.Host plexHost = new PlexShelf.Host() {
+        @Override public void glassTo(View v) { MainActivity.this.glassTo(v); }
+        @Override public void focusTopBar() {
             View pill = btnInputs.getVisibility() == View.VISIBLE ? btnInputs : firstTopButton();
             pill.requestFocus();
-            leavePlexLarge();
-            plexRow.setShown(false);
-            pill.post(() -> { if (pill.isFocused()) glassTo(pill); });
+            pill.post(() -> { if (pill.isFocused()) MainActivity.this.glassTo(pill); });
         }
-        @Override public void onRowDown() { leavePlexLarge(); focusTile(plexDockPosition()); }
+        @Override public void focusPlexTile() { focusTile(plexDockPosition()); }
+        @Override public void refit() { refitGlass(true); }
     };
     /** The top shelf: heroName, plus the cinematic shelf's "Last opened" line and dock position dots. */
     private View hero;
@@ -406,18 +398,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // the theme's background, so launch looks the same.
         getWindow().setBackgroundDrawable(null);
         wallpaperPlayer = new WallpaperPlayer(this, root, cfg);
-        // Token lives on the TV only: `settings put global plex_token <token>`, never in the repo. The server is
-        // config.xml plex_url, else `settings put global plex_url`, else found on the LAN (findPlex).
-        String plexUrl = getString(R.string.plex_url);
-        if (plexUrl.isEmpty()) {
-            String s = Settings.Global.getString(getContentResolver(), "plex_url");
-            if (s != null) plexUrl = s.trim();
-        }
-        plexToken = Settings.Global.getString(getContentResolver(), "plex_token");
-        if (plexToken != null && plexToken.isEmpty()) plexToken = null;
-        // Neither names a server: onResume finds one on the LAN (PlexGdm) and sets the row up then.
-        if (!plexUrl.isEmpty() && plexToken != null) startPlex(plexUrl);
-        plexScrim = findViewById(R.id.plexScrim);
         sky = findViewById(R.id.sky);
         sky.setIntensity(cfg.skyIntensity);
         glass = findViewById(R.id.glass);
@@ -479,6 +459,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         hiddenApps = new HashSet<>(cfg.hiddenApps);
 
         grid = findViewById(R.id.grid);
+        plex = new PlexShelf(this, root, grid, findViewById(R.id.plexScrim), plexHost, animations && !reducedMotion);
         rtlAppGrid = getResources().getBoolean(R.bool.rtl_app_grid);
         // Mirror only the app grid; the header and other locales keep their own layouts.
         grid.setLayoutManager(new GridLayoutManager(this, COLUMNS) {
@@ -607,12 +588,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
-                // Down from the Plex tile: the Continue Watching row rides up with the dock as it fades, instead of
-                // vanishing before the dock moves. placePlexRow puts it back when it shows again.
-                if (plexRow != null && !plexRow.shown()) {
-                    View row = plexRow.view();
-                    if (row.getAlpha() > 0f) row.setY(row.getY() - dy);
-                }
+                plex.onGridScrolled(dy);
                 if (!glassShown) return;
                 glassTargetY -= dy;
                 glassScrollShift -= dy;
@@ -853,7 +829,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         } else {
             // Still on screen (the quick panel was over it, or Home was already in front): the tiles are current,
             // so only go back to the first one; rebuilding would replay the entrance animation for nothing.
-            leavePlexLarge();
+            plex.leaveLarge();
             grid.post(() -> focusTile(0));
         }
     }
@@ -911,10 +887,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             pillsShown = true;
         }
         if (showStats) startStats();
-        resumed = true;
-        if (plex != null) plex.start();
-        if (plexRow != null) plexRow.start();
-        findPlex();
+        plex.start();
         sky.update();
         wallpaperPlayer.start();
         handler.postDelayed(minuteTick, MINUTE_MS);
@@ -979,7 +952,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             heroShown = false;
             hero.setAlpha(0f);
             ambient.setAlpha(0f);
-            if (plex != null) plex.setCaptionShown(false);
+            plex.hideCaption();
             heroArt.animate().cancel();
             heroArt.setAlpha(0f);
         }
@@ -1085,9 +1058,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroArt.animate().cancel();
         handler.removeCallbacks(minuteTick);
         stopStats();
-        resumed = false;
-        if (plex != null) plex.stop();
-        if (plexRow != null) { plexRow.stop(); leavePlexLarge(); }
+        plex.stop();
         if (diya != null) diya.stop();
         cancelPendingFocusScroll();
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
@@ -1699,123 +1670,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // launcher lays out left to right only (no supportsRtl).
             ((ViewGroup.MarginLayoutParams) hero.getLayoutParams()).leftMargin = bandLeft + inset;
             hero.requestLayout();
-            if (plexRow != null) plexRow.setEdge(plexEdge());
-            if (plex != null) plex.setEndMargin(root.getWidth() - bandRight + inset);
+            plex.setEdges(plexEdge(), root.getWidth() - bandRight + inset);
         });
     }
 
     // ---- Plex Continue Watching ------------------------------------------------------------------
 
-    private String plexToken;          // Settings.Global plex_token; null = no Plex at all
-    private boolean resumed, plexSearching;
-
-    /** The backdrop and the Continue Watching row for this server; started at once if Home is already in front. */
-    private void startPlex(String url) {
-        plex = new PlexBackdrop(this, root, url, plexToken, getString(R.string.plex_sections), density);
-        // Continue Watching: shown while the Plex dock tile is focused, above the dock; Up grows it to Plex's size.
-        plexRow = new PlexContinue(this, plexHost, url, plexToken, getString(R.string.plex_sections), density);
-        root.addView(plexRow.view(), root.indexOfChild(plex.caption()) + 1, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
-        if (shelfLeft >= 0) {   // found after the first layout: line it up with the band now, as alignShelf does
-            int inset = Math.round(12 * density);
-            plexRow.setEdge(plexEdge());
-            plex.setEndMargin(root.getWidth() - shelfRight + inset);
-        }
-        if (resumed) { plex.start(); plexRow.start(); }
-    }
-
-    /** No server configured: ask the LAN (GDM). Again on every resume until one answers, e.g. a server still booting. */
-    private void findPlex() {
-        if (plex != null || plexToken == null || plexSearching) return;
-        plexSearching = true;
-        new Thread(() -> {
-            String url = PlexGdm.find(2000);
-            runOnUiThread(() -> {
-                plexSearching = false;
-                if (url != null && plex == null && !isDestroyed()) startPlex(url);
-            });
-        }, "plex-gdm").start();
-    }
-
-    private static final String PLEX_PACKAGE = "com.plexapp.android";
-
     private boolean isPlexDock(int position) {
-        return position < COLUMNS && PLEX_PACKAGE.equals(adapter.packageAt(position));
+        return position < COLUMNS && PlexShelf.PLEX_PACKAGE.equals(adapter.packageAt(position));
     }
 
     private int plexDockPosition() {
         for (int i = 0; i < Math.min(COLUMNS, adapter.appCount()); i++) if (isPlexDock(i)) return i;
         return lastFocused % COLUMNS;
-    }
-
-    /** Items arrived or changed while the Plex dock tile has focus: run the dock focus again so the row is placed. */
-    private void refreshPlexRow() {
-        if (plexLarge) {
-            // Continue Watching emptied under the focused row (finished elsewhere): back to the Plex tile, nothing
-            // stranded. An empty library tab stays, with focus on its tab, so Left/Right reach the other tabs.
-            if (!plexRow.hasItems() && plexRow.onFirstTab()) { leavePlexLarge(); focusTile(plexDockPosition()); return; }
-            return;
-        }
-        refitGlass(true);   // runs the dock tile's focus again, which places or hides the row
-    }
-
-    /**
-     * Compact row, bottom 36dp above the dock tiles: with the band's 14dp pad and the list's 6dp, 28dp of air
-     * between posters and band, twice the 14dp between header and posters, so the row reads as its own group.
-     */
-    private void placePlexRow(float dockTopInRoot) {
-        View v = plexRow.view();
-        float y = dockTopInRoot - 36 * density - plexRow.height();
-        // No cancel here: setShown's fade may be running on the same animator, and y joins it.
-        if (animations && !reducedMotion && v.getAlpha() > 0f) v.animate().y(y).setDuration(260).start();
-        else v.setY(y);
-    }
-
-    /** Up into the row: Plex's poster size, the row near the bottom, the dock band peeking 16dp, details and art. */
-    private void enterPlexLarge() {
-        if (plexLarge || plexRow == null) return;
-        plexLarge = true;
-        plexRow.setLarge(true);
-        plexRow.setShown(true);
-        View v = plexRow.view();
-        // The row keeps the captions' room on every tab (PlexContinue.captionRoom), so the tab strip never moves when
-        // the tab changes; its bottom sits 24dp above the screen's edge.
-        float rowY = root.getHeight() - 24 * density - plexRow.height();
-        // The dock is parked at the grid's top padding while a dock tile has focus: that is the band's top.
-        Rect g = tileRect;
-        g.set(0, 0, grid.getWidth(), grid.getHeight());
-        root.offsetDescendantRectToMyCoords(grid, g);
-        float dy = root.getHeight() - 16 * density - (g.top + grid.getPaddingTop());
-        plexScrim.setVisibility(View.VISIBLE);
-        grid.animate().cancel();
-        if (!animations || reducedMotion) {
-            v.setY(rowY);
-            grid.setTranslationY(dy);
-            plexScrim.setAlpha(1f);
-            return;
-        }
-        // The glass was placed from the focus event, while the row was still up at its compact height: follow it down.
-        v.animate().y(rowY).setDuration(260).withEndAction(() -> { View f = v.findFocus(); if (f != null) glassTo(f); }).start();
-        grid.animate().translationY(dy).setDuration(260).start();
-        plexScrim.animate().alpha(1f).setDuration(260).start();
-    }
-
-    /** Back to the compact row: the dock returns, the scrim goes, the slideshow resumes. */
-    private void leavePlexLarge() {
-        if (!plexLarge) return;
-        plexLarge = false;
-        plexRow.setLarge(false);
-        if (plex != null) plex.resumeSlideshow();
-        grid.animate().cancel();
-        plexScrim.animate().cancel();
-        if (!animations || reducedMotion) {
-            grid.setTranslationY(0f);
-            plexScrim.setAlpha(0f);
-            plexScrim.setVisibility(View.GONE);
-            return;
-        }
-        grid.animate().translationY(0f).setDuration(260).start();
-        plexScrim.animate().alpha(0f).setDuration(260).withEndAction(() -> { if (!plexLarge) plexScrim.setVisibility(View.GONE); }).start();
     }
 
     // ---- top shelf -------------------------------------------------------------------------------
@@ -1824,17 +1691,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         String label = adapter.labelAt(position);
         int color = adapter.ambientColorAt(position);
         float y = dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
-        boolean rowShown = plexRow != null && isPlexDock(position) && plexRow.hasItems();
-        if (rowShown) {
-            // The Plex tile: the Continue Watching row stands where the name would, the caption stays hidden.
-            hideHero();
-            if (plex != null) plex.setCaptionShown(false);
-            plexRow.setShown(true);
-            placePlexRow(dockTopInRoot);
+        if (plex.showRow(isPlexDock(position), dockTopInRoot, y + hero.getHeight())) {
+            fadeOutHero();   // the Plex tile: the Continue Watching row stands where the name would
             return;
         }
-        if (plexRow != null) plexRow.setShown(false);
-        if (plex != null) plex.alignBottom(y + hero.getHeight());
         boolean changed = !label.contentEquals(heroName.getText());
         if (cinematic) showHeroArt(position);
 
@@ -2102,8 +1962,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroArt.animate().cancel();
         heroArt.setAlpha(0f);
         heroShown = false;
-        if (plex != null) plex.setCaptionShown(false);
-        if (plexRow != null) plexRow.setShown(false);
+        plex.hide();
         if (!ambientGlow) return;
         if (!animations || reducedMotion) {
             setAmbient(color);
@@ -2123,8 +1982,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     private void hideHero() {
         // The Plex tile shows the row instead of the name, so heroShown is already false there: hide the row first.
-        if (plex != null) plex.setCaptionShown(false);
-        if (plexRow != null) plexRow.setShown(false);
+        plex.hide();
+        fadeOutHero();
+    }
+
+    private void fadeOutHero() {
         if (!heroShown) return;
         stopAmbientAnimation();
         hero.animate().cancel();
@@ -2248,13 +2110,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
             if (position < COLUMNS) {                      // dock row: the Continue Watching row from the Plex tile, else the top bar
-                return isPlexDock(position) && plexRow != null && plexRow.focus();
+                return isPlexDock(position) && plex.focusRow();
             }
             target = position - COLUMNS;
         } else {
             // Down from the Plex tile: the focus waits for the grid's scroll, so the row would stay over the rising
             // dock until then. Hide it now; the scroll listener carries it up with the dock as it fades.
-            if (isPlexDock(position) && plexRow != null) plexRow.setShown(false);
+            if (isPlexDock(position)) plex.hide();
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
             if (position >= lastRowStart) {
                 if (adapter.isLibraryAt(count)) focusLibrary();
