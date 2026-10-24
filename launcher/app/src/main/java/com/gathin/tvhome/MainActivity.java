@@ -80,7 +80,6 @@ import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.io.File;
-import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -2158,20 +2157,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void startStats() {
         if (statsThread != null) return;
         stats.setVisibility(View.VISIBLE);
-        cpuTotalPrev = -1;
-        idlePrev = -1;
-        procStatDead = false;
         statsThread = new HandlerThread("stats");
         statsThread.start();
         // Each start gets its own handler, held by its task: stopStats on the main thread can clear the field
         // at any moment without the reader tripping over it.
         Handler bg = new Handler(statsThread.getLooper());
         statsBg = bg;
+        SystemStats sys = new SystemStats();   // this run's own samples, like its handler
+
         bg.post(new Runnable() {
             @Override
             public void run() {
                 if (statsBg != bg) return;
-                String line = readStatsLine();
+                String line = readStatsLine(sys);
                 handler.post(() -> {
                     if (showStats && stats != null && statsBg == bg) stats.setText(line);
                 });
@@ -2197,8 +2195,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         line.append(part);
     }
 
-    private String readStatsLine() {
-        int cpu = cpuPercent();
+    private String readStatsLine(SystemStats sys) {
+        int cpu = sys.cpuPercent();
         if (cpu < 0) {
             try {
                 Thread.sleep(200);             // second sample, so the first line already has a CPU figure
@@ -2206,128 +2204,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 Thread.currentThread().interrupt();
                 return "";
             }
-            cpu = cpuPercent();
+            cpu = sys.cpuPercent();
         }
         // Android 8 and later hide /proc/stat from apps on many TVs: then the line leaves CPU out rather than
         // showing a dash that never fills in.
         StringBuilder line = new StringBuilder();
         if (cpu >= 0) line.append(getString(R.string.stats_cpu, cpu));
-        long[] mem = memUsedOfTotalMb();
+        long[] mem = sys.memUsedOfTotalMb();
         if (mem != null) appendStat(line, getString(R.string.stats_memory, mem[0], mem[1]));
         String free = formatGb(getResources(), Environment.getDataDirectory().getFreeSpace());
         if (!free.isEmpty()) appendStat(line, getString(R.string.stats_storage, free));
         return StatsText.forLocale(line.toString(), getResources().getConfiguration().getLocales().get(0));
-    }
-
-    // -1: need another sample. -2: this source cannot be read (Android 9 hides /proc/stat from apps).
-    private static final int CPU_UNREADABLE = -2;
-    private long cpuTotalPrev = -1, cpuIdlePrev = -1;
-    private boolean procStatDead;
-    private long idlePrev = -1, wallPrev = -1;
-
-    private int cpuPercent() {
-        if (!procStatDead) {
-            int fromStat = cpuFromProcStat();
-            if (fromStat != CPU_UNREADABLE) return fromStat;
-            procStatDead = true;
-            idlePrev = -1;
-        }
-        return cpuFromIdle();
-    }
-
-    private int cpuFromProcStat() {
-        String s = readFirstLine("/proc/stat");
-        if (s == null || !s.startsWith("cpu")) return CPU_UNREADABLE;
-        String[] t = s.trim().split("\\s+");
-        if (t.length < 5) return CPU_UNREADABLE;
-        try {
-            long user = Long.parseLong(t[1]), nice = Long.parseLong(t[2]), sys = Long.parseLong(t[3]);
-            long idle = Long.parseLong(t[4]);
-            long iowait = t.length > 5 ? Long.parseLong(t[5]) : 0;
-            long irq = t.length > 6 ? Long.parseLong(t[6]) : 0;
-            long soft = t.length > 7 ? Long.parseLong(t[7]) : 0;
-            long total = user + nice + sys + idle + iowait + irq + soft;
-            long idleAll = idle + iowait;
-            if (cpuTotalPrev < 0) {
-                cpuTotalPrev = total;
-                cpuIdlePrev = idleAll;
-                return -1;
-            }
-            long dt = total - cpuTotalPrev, di = idleAll - cpuIdlePrev;
-            cpuTotalPrev = total;
-            cpuIdlePrev = idleAll;
-            if (dt <= 0) return -1;
-            int busy = (int) Math.round((dt - di) * 100.0 / dt);
-            return Math.max(0, Math.min(100, busy));
-        } catch (NumberFormatException e) {
-            return CPU_UNREADABLE;
-        }
-    }
-
-    /** Busy percent from cpuidle time (microseconds) across the cores. -1 until the second sample. */
-    private int cpuFromIdle() {
-        long idle = 0;
-        int cores = 0;
-        for (int i = 0; i < 8; i++) {
-            boolean any = false;
-            for (int state = 0; state < 8; state++) {
-                String t = readFirstLine("/sys/devices/system/cpu/cpu" + i
-                        + "/cpuidle/state" + state + "/time");
-                if (t == null) break;
-                try {
-                    idle += Long.parseLong(t.trim());
-                    any = true;
-                } catch (NumberFormatException e) {
-                    break;
-                }
-            }
-            if (!any) break;
-            cores++;
-        }
-        if (cores == 0) return -1;
-        long wall = SystemClock.elapsedRealtime() * 1000L;
-        if (idlePrev < 0) {
-            idlePrev = idle;
-            wallPrev = wall;
-            return -1;
-        }
-        long di = idle - idlePrev;
-        long dw = (wall - wallPrev) * cores;
-        idlePrev = idle;
-        wallPrev = wall;
-        if (dw <= 0) return -1;
-        int busy = (int) Math.round((dw - di) * 100.0 / dw);
-        return Math.max(0, Math.min(100, busy));
-    }
-
-    /** RAM usage as {used, total} in MB, used = MemTotal - MemAvailable, e.g. "945 / 1536 MB". Used over
-     *  free so the line reads as a load against a known whole; null when /proc/meminfo cannot be read. */
-    private long[] memUsedOfTotalMb() {
-        long available = -1, total = -1;
-        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader("/proc/meminfo"))) {
-            String line;
-            String[] t;
-            while ((line = r.readLine()) != null) {
-                if (line.startsWith("MemAvailable:")) {
-                    t = line.split("\\s+");
-                    if (t.length >= 2) available = Long.parseLong(t[1]) / 1024;
-                } else if (line.startsWith("MemTotal:")) {
-                    t = line.split("\\s+");
-                    if (t.length >= 2) total = Long.parseLong(t[1]) / 1024;
-                }
-            }
-        } catch (IOException | NumberFormatException ignored) {
-        }
-        if (available < 0 || total <= 0) return null;
-        return new long[]{Math.max(0, total - available), total};
-    }
-
-    private static String readFirstLine(String path) {
-        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(path))) {
-            return r.readLine();
-        } catch (IOException e) {
-            return null;
-        }
     }
 
     private static String formatGb(Resources res, long bytes) {
@@ -2797,11 +2684,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         @Override public void onChange(boolean selfChange) { updateInputsButton(); }
     };
 
-    /** The input's connection state: the TV's own when it is trustworthy, else Sony's table, else unknown (-1). */
-    private int inputState(TvInputManager tim, String id, boolean bogus, Map<String, Integer> sony) {
-        if (!bogus) return tim.getInputState(id);
-        Integer s = sony.get(id);
-        return s == null ? -1 : s;
+    /** The connection states of these inputs (InputStates); Sony's table is read only if the TV's states are bogus. */
+    private InputStates inputStates(TvInputManager tim, List<TvInputInfo> inputs) {
+        List<InputStates.Input> in = new ArrayList<>();
+        for (TvInputInfo i : inputs) {
+            in.add(new InputStates.Input(i.getId(), i.getParentId(), i.getType() == TvInputInfo.TYPE_HDMI,
+                    i.isPassthroughInput(), tim.getInputState(i.getId())));
+        }
+        return new InputStates(in, this::sonyConnectStates);
     }
 
     /**
@@ -2817,19 +2707,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         if (tim != null) {
             List<TvInputInfo> inputs = tim.getTvInputList();
-            Set<String> ids = new HashSet<>();
-            for (TvInputInfo info : inputs) ids.add(info.getId());
-            Set<String> portsWithDevice = new HashSet<>();
-            for (TvInputInfo info : inputs)
-                if (info.isPassthroughInput() && info.getParentId() != null && ids.contains(info.getParentId())) portsWithDevice.add(info.getParentId());
-            boolean bogus = hdmiStateBogus(tim, inputs, ids);
-            Map<String, Integer> sony = bogus ? sonyConnectStates() : Collections.emptyMap();
+            InputStates states = inputStates(tim, inputs);
             for (TvInputInfo info : inputs) {
                 if (!info.isPassthroughInput() || info.isHidden(this) || info.getType() != TvInputInfo.TYPE_HDMI) continue;
                 if (Integer.valueOf(-1).equals(mappedSource(info.getId()))) continue;
-                boolean cec = info.getParentId() != null && ids.contains(info.getParentId());
-                if (!cec && (portsWithDevice.contains(info.getId())
-                        || inputState(tim, info.getId(), bogus, sony) != TvInputManager.INPUT_STATE_CONNECTED)) continue;
+                if (!states.pluggedIn(info.getId())) continue;
+                boolean cec = states.isCecDevice(info.getId());
                 CharSequence name = info.loadCustomLabel(this);
                 if (name == null || name.length() == 0) name = info.loadLabel(this);
                 String label = name == null ? info.getId() : name.toString();
@@ -2918,21 +2801,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 return false;
         }
     };
-
-    /**
-     * Some TVs (Sony) report every HDMI port as connected whether or not anything is plugged in, so the HDMI
-     * states mean nothing there. A TV with every port really in use is misread too; a CEC device still counts.
-     */
-    private static boolean hdmiStateBogus(TvInputManager tim, List<TvInputInfo> inputs, Set<String> ids) {
-        int hdmiPorts = 0, hdmiConnected = 0;
-        for (TvInputInfo info : inputs) {
-            if (!info.isPassthroughInput() || info.getType() != TvInputInfo.TYPE_HDMI) continue;
-            if (info.getParentId() != null && ids.contains(info.getParentId())) continue;
-            hdmiPorts++;
-            if (tim.getInputState(info.getId()) == TvInputManager.INPUT_STATE_CONNECTED) hdmiConnected++;
-        }
-        return hdmiPorts > 1 && hdmiConnected == hdmiPorts;
-    }
 
     private void updateInputsButton() {
         updateInputTiles();
@@ -3114,8 +2982,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 if (onPort == null) cecDevices.put(parent, onPort = new ArrayList<>());
                 onPort.add(info);
             }
-            boolean hdmiStateBogus = hdmiStateBogus(tim, inputs, inputIds);
-            Map<String, Integer> sony = hdmiStateBogus ? sonyConnectStates() : Collections.emptyMap();
+            InputStates states = inputStates(tim, inputs);
             for (TvInputInfo info : inputs) {
                 if (info.getType() == TvInputInfo.TYPE_TUNER
                         && (info.getServiceInfo().applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0
@@ -3162,9 +3029,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                         if (name == null || name.length() == 0) name = named ? custom : device.loadLabel(this);
                         String deviceLabel = name == null || name.length() == 0 ? label : name + " \u00B7 " + label;
                         final String deviceId = device.getId();
-                        // The device answered over CEC, so something is on the port even when the TV's states are bogus.
-                        int state = hdmiStateBogus ? TvInputManager.INPUT_STATE_CONNECTED : tim.getInputState(deviceId);
-                        addInputRow(rows, popup, R.drawable.ic_input, deviceLabel, state, () -> openInput(deviceId));
+                        addInputRow(rows, popup, R.drawable.ic_input, deviceLabel, states.state(deviceId), () -> openInput(deviceId));
                     }
                     continue;
                 }
@@ -3173,7 +3038,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 final String id = info.getId();
                 // Analog AV jacks have no hotplug detection, and some TVs report them as always connected
                 // (TCL Smart TV Pro G03 says "Connected" with nothing plugged in), so AV rows show no state.
-                int state = !hdmi ? -1 : inputState(tim, id, hdmiStateBogus, sony);
+                int state = !hdmi ? InputStates.UNKNOWN : states.state(id);
                 addInputRow(rows, popup, hdmi ? R.drawable.ic_input : R.drawable.ic_av, label, state,
                         () -> openInput(id));
             }

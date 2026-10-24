@@ -109,12 +109,13 @@ D-pad navigation, nothing TV-specific in code.
   one pill under the gear per input with something plugged in (Down from the gear walks them). The pills float
   on root (`makeInputTiles`), placed under `topButtons` in code, not inside the header: in the header each pill
   made it taller and plugging a cable moved the whole grid. A rebuild is skipped when the inputs and labels are
-  unchanged, and focus returns to the same input after one. The state
-  comes from `TvInputManager`, except on TVs whose ports all claim connected (`hdmiStateBogus`): there a
+  unchanged, and focus returns to the same input after one. The menu and the pills share one set of state rules,
+  `InputStates` (plain values in, JVM-tested). The state
+  comes from `TvInputManager`, except on TVs whose ports all claim connected: there a
   CEC device on the port counts, and on Sony BRAVIA the real cable state is read from Sony's exported
   provider `content://com.sony.dtv.tvinput.external.provider/sony_external_input` (`connect_state`),
   watched with a content observer. Found by reading Sony's ExternalInputServices APK; see
-  `sonyConnectStates` in MainActivity.
+  `sonyConnectStates` in MainActivity, which `inputStates` hands to `InputStates`.
 - **Services.** `InputKeyService` and `HomeKeyService` are accessibility services that remap remote
   buttons the stock launcher used to answer; `ClockDream` is the screensaver; `Cards` implements the
   module-card contract in `docs/specs/card.md` (apps declaring their own tile, approved per signing key).
