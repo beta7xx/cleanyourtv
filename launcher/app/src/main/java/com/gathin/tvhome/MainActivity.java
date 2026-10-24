@@ -115,6 +115,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private String liveTvPkg;
     /** Idle time on Home before ClockActivity; 0 is off (config.xml, home_idle_clock_minutes). */
     private long idleClockMs;
+    /** Uptime of a D-pad key our own handlers consumed, and its click, for the focus change it causes. */
+    private long navKeyAt = -1000;
+    private int navSound;
     private final Runnable showIdleClock = () -> startActivity(new Intent(this, ClockActivity.class));
     private String liveTvAction;
     private String liveTvInputId;
@@ -605,6 +608,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                // Down from the Plex tile: the Continue Watching row rides up with the dock as it fades, instead of
+                // vanishing before the dock moves. placePlexRow puts it back when it shows again.
+                if (plexRow != null && !plexRow.shown()) {
+                    View row = plexRow.view();
+                    if (row.getAlpha() > 0f) row.setY(row.getY() - dy);
+                }
                 if (!glassShown) return;
                 glassTargetY -= dy;
                 glassScrollShift -= dy;
@@ -732,6 +741,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
         // Hide the glass when focus leaves the tiles.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
+            // 1.5 s covers a focus that waits for the grid's smooth scroll (focusTile, focusLibrary).
+            if (newF != null && SystemClock.uptimeMillis() - navKeyAt < 1500) {
+                navKeyAt = -1000;
+                newF.playSoundEffect(navSound);
+            }
+            // Under a popup the tiles can rebuild (an app added from the library) and Home's focus falls to the first
+            // pill; the pill it was on may have moved, so the glass hides, and shows again when the dismiss puts focus back.
+            if (openPopup != null) {
+                hideGlass();
+                return;
+            }
             boolean onTile = newF != null && newF.getId() == R.id.card;
             if (newF != null && newF.getTag(R.id.glass_target) != null) glassTo(newF);
             else if (!onTile) hideGlass();
@@ -1167,6 +1187,28 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        // The default focus search clicks, but many moves are our own handlers (tiles, Plex row and tabs, pills,
+        // the footer), which consume the key, so the focus change they cause clicks instead. Marked before
+        // dispatch: most handlers move focus inside it.
+        int code = event.getKeyCode();
+        boolean arrow = event.getAction() == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_UP
+                || code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_DPAD_LEFT
+                || code == KeyEvent.KEYCODE_DPAD_RIGHT);
+        if (arrow) {
+            navKeyAt = SystemClock.uptimeMillis();
+            navSound = code == KeyEvent.KEYCODE_DPAD_UP ? SoundEffectConstants.NAVIGATION_UP
+                    : code == KeyEvent.KEYCODE_DPAD_DOWN ? SoundEffectConstants.NAVIGATION_DOWN
+                    : code == KeyEvent.KEYCODE_DPAD_LEFT ? SoundEffectConstants.NAVIGATION_LEFT
+                    : SoundEffectConstants.NAVIGATION_RIGHT;
+        } else if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            navKeyAt = -1000;
+        }
+        boolean handled = dispatchKey(event);
+        if (arrow && !handled) navKeyAt = -1000;   // the default focus search moves and clicks itself
+        return handled;
+    }
+
+    private boolean dispatchKey(KeyEvent event) {
         if (handleSettingsKey(event)) return true;
         if (!reordering) return super.dispatchKeyEvent(event);
         if (dockEditing) return dispatchDockEdit(event);
@@ -2320,6 +2362,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
             target = position - COLUMNS;
         } else {
+            // Down from the Plex tile: the focus waits for the grid's scroll, so the row would stay over the rising
+            // dock until then. Hide it now; the scroll listener carries it up with the dock as it fades.
+            if (isPlexDock(position) && plexRow != null) plexRow.setShown(false);
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
             if (position >= lastRowStart) {
                 if (adapter.isLibraryAt(count)) focusLibrary();
@@ -2327,10 +2372,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
             target = Math.min(position + COLUMNS, count - 1);
         }
-        focusTile(target);
-        // The default focus search clicks for Left/Right; Up/Down are handled here, so click for them too.
-        grid.playSoundEffect(keyCode == KeyEvent.KEYCODE_DPAD_UP
-                ? SoundEffectConstants.NAVIGATION_UP : SoundEffectConstants.NAVIGATION_DOWN);
+        focusTile(target);   // dispatchKeyEvent clicks for the focus change
         return true;
     }
 

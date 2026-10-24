@@ -215,6 +215,8 @@ final class PlexContinue {
 
     View view() { return row; }
 
+    boolean shown() { return shown; }
+
     private void buildTabs() {
         tabsRow.removeAllViews();
         for (int i = 0; i < tabs.size(); i++) {
@@ -317,9 +319,12 @@ final class PlexContinue {
         row.animate().cancel();
         if (s) {
             if (!items.isEmpty()) row.setVisibility(View.VISIBLE);
-            row.animate().alpha(1f).setDuration(160).start();
+            // The default curve again: the animator keeps the hide's, and placing the row (y) runs on it too.
+            row.animate().alpha(1f).setDuration(160).setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator()).start();
         } else {
-            row.animate().alpha(0f).setDuration(160).withEndAction(() -> { if (!shown) row.setVisibility(View.INVISIBLE); }).start();
+            // Fast at the start: Down from the Plex tile carries the row up with the dock (MainActivity's grid scroll
+            // listener), and it must be mostly gone before it reaches the clock.
+            row.animate().alpha(0f).setDuration(180).setInterpolator(new android.view.animation.DecelerateInterpolator(2f)).withEndAction(() -> { if (!shown) row.setVisibility(View.INVISIBLE); }).start();
         }
     }
 
