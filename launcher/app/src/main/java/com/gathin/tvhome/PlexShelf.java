@@ -41,6 +41,8 @@ final class PlexShelf {
     /** The row has focus: posters at the Plex app's size, the dock slid down, details and art up. */
     private boolean large;
     private boolean resumed, searching;
+    /** The network came up while a search was out: that search started too early, so run another. */
+    private boolean searchAgain;
     private int rowEdge = -1, captionEndMargin;
     private final Rect rect = new Rect();
 
@@ -88,6 +90,16 @@ final class PlexShelf {
     void stop() {
         resumed = false;
         if (backdrop != null) { backdrop.stop(); row.stop(); leaveLarge(); }
+    }
+
+    /**
+     * The default network came up. At boot Home is in front before Wi-Fi connects, so the LAN search from start
+     * finds nothing, and Home staying in front never starts another: search again now.
+     */
+    void onNetwork() {
+        if (!resumed) return;
+        if (searching) searchAgain = true;
+        else find();
     }
 
     /** The row's left edge and the caption's end margin, in root coordinates (MainActivity.alignShelf). */
@@ -174,15 +186,17 @@ final class PlexShelf {
         backdrop.setEndMargin(captionEndMargin);
     }
 
-    /** No server configured: ask the LAN (GDM). Again on every start until one answers. */
+    /** No server configured: ask the LAN (GDM). Again on every start and network change until one answers. */
     private void find() {
         if (backdrop != null || token == null || searching) return;
         searching = true;
+        searchAgain = false;
         new Thread(() -> {
             String url = PlexGdm.find(2000);
             activity.runOnUiThread(() -> {
                 searching = false;
                 if (url != null && backdrop == null && !activity.isDestroyed()) build(url);
+                else if (url == null && searchAgain && resumed) find();
             });
         }, "plex-gdm").start();
     }

@@ -285,7 +285,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
         @Override
         public void onAvailable(@NonNull Network network) {
-            handler.post(MainActivity.this::updateWifiLabel);
+            handler.post(() -> {
+                updateWifiLabel();
+                plex.onNetwork();   // a LAN search at boot ran before Wi-Fi was up
+            });
         }
 
         @Override
