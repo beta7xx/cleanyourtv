@@ -1461,6 +1461,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         else to = from / COLUMNS < (n - 1) / COLUMNS ? n - 1 : from;
         if (to < 0 || to >= n || to == from) return;
         keepScroll(() -> adapter.move(from, to));
+        // The carried tile keeps its focus as it moves, so no focus change clicks (dispatchKeyEvent): click here.
+        navKeyAt = -1000;
+        grid.playSoundEffect(navSound);
         // The owner carries this tile: where it lands decides whether it is in the dock, not dock_apps (#499).
         if (to < COLUMNS) dockInSession.add(movingKey);
         else dockInSession.remove(movingKey);
