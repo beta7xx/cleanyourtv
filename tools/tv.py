@@ -111,8 +111,22 @@ if not os.path.exists(KEY) and os.path.exists(ADB_KEY) and os.path.exists(ADB_KE
 
 
 def restrict(path, mode=0o600):
-    """Keep a private key, or its folder, to this account. Reported, never fatal: the key still works
-    either way. Windows has no POSIX mode bits and ignores this."""
+    r"""Keep a private key, or its folder, to this account. Reported, never fatal: the key still works
+    either way. Windows ignores mode bits, so there the inherited ACL is replaced instead: a checkout outside
+    the user profile (C:\Projects) otherwise leaves the key readable by BUILTIN\Users."""
+    if os.name == "nt":
+        user = os.environ.get("USERNAME", "")
+        if os.environ.get("USERDOMAIN"):
+            user = os.environ["USERDOMAIN"] + "\\" + user
+        inherit = "(OI)(CI)" if os.path.isdir(path) else ""
+        try:
+            r = subprocess.run(["icacls", path, "/inheritance:r", "/grant:r", f"{user}:{inherit}F",
+                                "/grant:r", f"*S-1-5-18:{inherit}F"], capture_output=True, text=True)
+            if r.returncode != 0:
+                raise OSError((r.stderr or r.stdout).strip())
+        except OSError as e:
+            print(f"warning: could not restrict permissions on {path}: {e}", file=sys.stderr)
+        return
     try:
         os.chmod(path, mode)
     except OSError as e:
