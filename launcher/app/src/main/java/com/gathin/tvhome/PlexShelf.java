@@ -191,11 +191,17 @@ final class PlexShelf {
         if (backdrop != null || token == null || searching) return;
         searching = true;
         searchAgain = false;
+        // The server found first is pinned; reset with `pm clear`, or set plex_url, when its address changes.
+        android.content.SharedPreferences prefs = activity.getSharedPreferences("plex", Activity.MODE_PRIVATE);
+        String pin = prefs.getString("server", null);
         new Thread(() -> {
-            String url = PlexGdm.find(2000);
+            String url = PlexGdm.find(2000, pin);
             activity.runOnUiThread(() -> {
                 searching = false;
-                if (url != null && backdrop == null && !activity.isDestroyed()) build(url);
+                if (url != null && backdrop == null && !activity.isDestroyed()) {
+                    if (pin == null) prefs.edit().putString("server", url).apply();
+                    build(url);
+                }
                 else if (url == null && searchAgain && resumed) find();
             });
         }, "plex-gdm").start();

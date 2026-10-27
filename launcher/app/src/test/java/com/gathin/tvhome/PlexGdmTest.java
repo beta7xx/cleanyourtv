@@ -1,6 +1,8 @@
 package com.gathin.tvhome;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNull;
 
 import org.junit.Test;
@@ -15,6 +17,13 @@ public class PlexGdmTest {
 
     @Test public void aPlayerReplyIsNotAServer() {
         assertNull(PlexGdm.url(SERVER.replace("plex/media-server", "plex/media-player"), "192.168.1.50"));
+    }
+
+    @Test public void onlyThePinnedServerIsAcceptedOnceOneIsPinned() {
+        assertTrue(PlexGdm.accepts(null, "http://192.168.1.50:32400"));
+        assertTrue(PlexGdm.accepts("http://192.168.1.50:32400", "http://192.168.1.50:32400"));
+        assertFalse(PlexGdm.accepts("http://192.168.1.50:32400", "http://192.168.1.66:32400"));
+        assertFalse(PlexGdm.accepts("http://192.168.1.50:32400", "http://192.168.1.50:32401"));
     }
 
     @Test public void aReplyWithoutAUsablePortIsIgnored() {
