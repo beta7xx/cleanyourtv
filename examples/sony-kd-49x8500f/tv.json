@@ -1,0 +1,6 @@
+{
+  "tv": "Sony BRAVIA KD-49X8500F (2018, BRAVIA_ATV3_4K, MediaTek MT5891), Asia-Pacific",
+  "os": "Android TV 9",
+  "brand": "Sony",
+  "notes": "Same build as the XBR-65X900F (US) list, identical package set minus `com.sony.dtv.promos`, so its notes apply; `com.sony.dtv.tvx` plays HDMI and the DVB-T tuner, keep it; 2 GB RAM; launcher installed with the Plex Recently Added backdrop (server from config.xml `plex_url`, Settings or the LAN)"
+}

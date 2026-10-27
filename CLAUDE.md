@@ -22,8 +22,8 @@ Launcher (needs JDK 17, Android SDK platform 34, build-tools 34.0.0; run from `l
 ```
 
 Release is R8-minified and signed with the debug key, so it installs over a debug build. CI fails a
-release APK over the size gate in `.github/workflows/ci.yml` (500 KB on this fork, 480 KB upstream; this fork's release is about 500.4 KB, 500,407 B); the
-launcher targets 1 GB TVs and sits within a few KB of the gate, so check the size after any addition:
+release APK over the size gate in `.github/workflows/ci.yml` (576 KB, upstream's; this fork's release, Plex row included,
+is about 552 KB, 565,541 B, after the October 2026 merge); the launcher targets 1 GB TVs and sits near the gate, so check the size after any addition:
 `stat -c %s app/build/outputs/apk/release/app-release.apk`.
 
 Repo lists, tools and docs (from the repo root, Python 3.12, `tools/requirements.txt` in `tools/venv`):

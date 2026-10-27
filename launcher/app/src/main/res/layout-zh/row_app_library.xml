@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chinese text sits low in the line: without font padding and with the text dropped 2dp it lines up with
+     the icon (drawable-zh/ic_apps_pill nudges that down too). This fork's reorder pill stays beside it. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="84dp"
+    android:clipChildren="false" android:clipToPadding="false">
+    <!-- The app library pill and, with reorder_button, the reorder pill beside it (moved here from the top bar). -->
+    <LinearLayout
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="center" android:orientation="horizontal"
+        android:clipChildren="false" android:clipToPadding="false">
+        <TextView android:id="@+id/btnLibrary" style="@style/TopButton"
+            android:layout_marginStart="0dp"
+            android:text="@string/app_library"
+            android:drawableStart="@drawable/ic_apps_pill"
+            android:includeFontPadding="false"
+            android:paddingBottom="2dp" />
+        <TextView android:id="@+id/btnReorderFooter" style="@style/TopButtonIcon"
+            android:visibility="gone"
+            android:contentDescription="@string/reorder"
+            android:drawableStart="@drawable/ic_swap_vert" />
+    </LinearLayout>
+</FrameLayout>

@@ -10,7 +10,7 @@
         <TextView android:id="@+id/btnLibrary" style="@style/TopButton"
             android:layout_marginStart="0dp"
             android:text="@string/app_library"
-            android:drawableStart="@drawable/ic_apps" />
+            android:drawableStart="@drawable/ic_apps_pill" />
         <TextView android:id="@+id/btnReorderFooter" style="@style/TopButtonIcon"
             android:visibility="gone"
             android:contentDescription="@string/reorder"

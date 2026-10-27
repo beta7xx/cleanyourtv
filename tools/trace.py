@@ -15,6 +15,10 @@ and later. Set TV_HOST to the TV's IP (and TV_PORT if it is not 5555). Usage:
     tools/trace.py custom --setup 'input keyevent KEYCODE_HOME' --setup 'sleep 2' \\
                           --step 'input keyevent KEYCODE_DPAD_RIGHT' --step 'sleep 1' --out DIR
 
+--out DIR is the folder the traces go into; it is created if it is not there. A file where the folder
+goes, a path through a file, and an empty --out are refused as argument errors (exit 2) before the TV is
+asked anything, so a typo cannot read as a recording that failed.
+
 Scenarios (setup runs before the recording starts, so it stays out of the trace):
     cold     another app in front, the launcher force-stopped, then started with `am start -W`
     coldsys  Home in front, the launcher force-stopped: Android starts it again by itself
@@ -26,6 +30,7 @@ import argparse
 import base64
 import json
 import os
+from pathlib import Path
 import re
 import sys
 import time
@@ -38,26 +43,49 @@ NAV_KEYS = ("RIGHT RIGHT RIGHT LEFT LEFT LEFT DOWN RIGHT DOWN LEFT DOWN UP "
 START_MARGIN_S = 3    # recording starts in the background; give it time before the first step
 END_MARGIN_S = 2
 
-CONFIG = """buffers {{ size_kb: 65536 fill_policy: RING_BUFFER }}
-buffers {{ size_kb: 4096 fill_policy: RING_BUFFER }}
-data_sources {{ config {{ name: "linux.ftrace" target_buffer: 0 ftrace_config {{
-  ftrace_events: "sched/sched_switch" ftrace_events: "sched/sched_wakeup" ftrace_events: "sched/sched_waking"
-  ftrace_events: "power/cpu_frequency" ftrace_events: "power/cpu_idle"
-  ftrace_events: "task/task_newtask" ftrace_events: "task/task_rename" ftrace_events: "sched/sched_process_exit"
-  atrace_categories: "am" atrace_categories: "wm" atrace_categories: "view" atrace_categories: "gfx"
-  atrace_categories: "input" atrace_categories: "dalvik" atrace_categories: "res" atrace_categories: "binder_driver"
-  atrace_apps: "{package}"
-  buffer_size_kb: 16384 drain_period_ms: 250 }} }} }}
-data_sources {{ config {{ name: "linux.process_stats" target_buffer: 1 process_stats_config {{ scan_all_processes_on_start: true }} }} }}
-data_sources {{ config {{ name: "android.surfaceflinger.frametimeline" }} }}
-data_sources {{ config {{ name: "android.packages_list" }} }}
-duration_ms: {duration_ms}
-"""
+def _varint(value):
+    """Unsigned protobuf integer; the config only uses non-negative values."""
+    out = bytearray()
+    while value > 127:
+        out.append((value & 127) | 128)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def _field(number, value):
+    """The config's two wire types: unsigned integers and length-delimited strings/messages."""
+    if isinstance(value, str):
+        value = value.encode("utf-8")
+    if isinstance(value, bytes):
+        return _varint((number << 3) | 2) + _varint(len(value)) + value
+    return _varint(number << 3) + _varint(value)
 
 
 def perfetto_config(package, duration_ms):
-    """The text config: scheduling, the app's lifecycle and drawing slices, and the frame timeline."""
-    return CONFIG.format(package=package, duration_ms=int(duration_ms))
+    """Binary TraceConfig: Android P has no --txt parser; later versions accept binary too.
+
+    Field numbers come from the Android P schema, including FtraceConfig and ProcessStatsConfig:
+    https://android.googlesource.com/platform/external/perfetto/+/android-9.0.0_r1/protos/perfetto/config/
+    """
+    ftrace = b"".join(_field(1, event) for event in (
+        "sched/sched_switch", "sched/sched_wakeup", "sched/sched_waking",
+        "power/cpu_frequency", "power/cpu_idle", "task/task_newtask", "task/task_rename",
+        "sched/sched_process_exit"))
+    ftrace += b"".join(_field(2, category) for category in (
+        "am", "wm", "view", "gfx", "input", "dalvik", "res", "binder_driver"))
+    # FtraceConfig.atrace_apps=3, buffer_size_kb=10, drain_period_ms=11.
+    ftrace += _field(3, package) + _field(10, 16384) + _field(11, 250)
+    sources = (
+        _field(1, "linux.ftrace") + _field(2, 0) + _field(100, ftrace),
+        _field(1, "linux.process_stats") + _field(2, 1) + _field(103, _field(2, 1)),  # scan_all_processes_on_start
+        _field(1, "android.surfaceflinger.frametimeline"),
+        _field(1, "android.packages_list"),
+    )
+    # TraceConfig.buffers=1, data_sources=2, duration_ms=3. Each DataSource.config=1.
+    # BufferConfig.size_kb=1 and fill_policy=4 (RING_BUFFER=1).
+    buffers = b"".join(_field(1, _field(1, size) + _field(4, 1)) for size in (65536, 4096))
+    return buffers + b"".join(_field(2, _field(1, source)) for source in sources) + _field(3, int(duration_ms))
 
 
 def recording_ms(steps):
@@ -69,10 +97,12 @@ def recording_ms(steps):
 def scenario(name, launcher_component, other_component, setup=(), steps=()):
     """(setup, steps) shell commands for a scenario. Setup runs before the recording starts."""
     package = launcher_component.split("/")[0]
-    other = f"am start -n {other_component}" if other_component else None
+    # Reuse the other activity across runs instead of growing its task history.
+    other = f"am start --activity-reorder-to-front -n {other_component}" if other_component else None
     if name == "cold":
         return [other, "sleep 2", f"am force-stop {package}", "sleep 2"], \
-               [f"am start -W -n {launcher_component}", "sleep 4"]
+               [f"am start -W -a android.intent.action.MAIN "
+                f"-c android.intent.category.HOME -n {launcher_component}", "sleep 4"]
     if name == "coldsys":
         return ["input keyevent KEYCODE_HOME", "sleep 2"], [f"am force-stop {package}", "sleep 5"]
     if name == "home":
@@ -85,12 +115,35 @@ def scenario(name, launcher_component, other_component, setup=(), steps=()):
     return list(setup), list(steps)
 
 
+def traces_folder(value):
+    """--out as the folder the traces go into, judged before anything is asked of the TV.
+
+    os.makedirs() answers a file where the folder goes with FileExistsError, a path through a file with
+    NotADirectoryError and an empty argument with FileNotFoundError: three tracebacks with exit 1, each
+    thrown from main() after the TV has answered the Home query and the model was read, so the reader
+    cannot tell their argument from a recording that failed. Refusing here makes it an argument error
+    like --runs or --app, with the run never reaching the TV. A folder that does not exist yet is fine:
+    makedirs() creates it, as the default traces/ always has.
+    """
+    if not value:
+        raise argparse.ArgumentTypeError("--out is empty: name the folder for the traces, e.g. --out traces/before")
+    path = Path(value)
+    if path.exists() and not path.is_dir():
+        raise argparse.ArgumentTypeError(f"{value} is a file, and --out is the folder the traces go into: "
+                                         f"nothing could be recorded into it")
+    for parent in path.parents:
+        if parent.exists() and not parent.is_dir():
+            raise argparse.ArgumentTypeError(f"{value} passes through the file {parent}, so the folder the "
+                                             f"traces go into cannot be made")
+    return value
+
+
 def parse(argv):
     p = argparse.ArgumentParser(description="Record Perfetto traces on the TV around a launcher scenario. "
                                             "See tools/trace.md.")
     p.add_argument("scenario", choices=["cold", "coldsys", "home", "nav", "custom"])
     p.add_argument("--runs", type=int, default=5, help="how many traces to record (default 5)")
-    p.add_argument("--out", default="traces", help="folder for the traces (default traces/)")
+    p.add_argument("--out", type=traces_folder, default="traces", help="folder for the traces (default traces/)")
     p.add_argument("--package", default="com.gathin.tvhome", help="the launcher's package (default com.gathin.tvhome)")
     p.add_argument("--app", metavar="COMPONENT",
                    help="the other app for cold and home, as package/activity (default: found on the TV)")
@@ -115,11 +168,11 @@ def record_one(dev, setup, steps, package, out_path, run_shell=None):
     run_shell = run_shell or (lambda cmd: dev.shell(cmd, read_timeout_s=120.0))
     for cmd in setup:
         _run(run_shell, cmd)
-    config = base64.b64encode(perfetto_config(package, recording_ms(steps)).encode()).decode()
-    said = run_shell(f"rm -f {REMOTE}; echo {config} | base64 -d | perfetto --txt -c - -o {REMOTE} --background 2>&1")
+    config = base64.b64encode(perfetto_config(package, recording_ms(steps))).decode()
+    said = run_shell(f"rm -f {REMOTE}; echo {config} | base64 -d | perfetto -c - -o {REMOTE} --background 2>&1")
     if re.search(r"not found|inaccessible|[Ee]rror", said):
         raise RuntimeError("perfetto did not start on the TV (it ships with Android 9 and later): " + said.strip())
-    # --background prints the PID it continues as. Watch /proc for it: SELinux refuses `kill -0` on perfetto's
+    # Newer --background clients print their PID. Watch /proc for it: SELinux refuses `kill -0` on perfetto's
     # process from the shell (TCL C755), which would look like a finished recording and pull an empty file.
     pid = next((w for w in said.split() if w.isdigit()), None)
     alive = f"[ -d /proc/{pid} ] && echo running" if pid else "pidof perfetto >/dev/null && echo running"
@@ -208,7 +261,7 @@ def main(argv=None):
                 bench.restore_accessibility(_Shell(shell), args.package, helpers)
     finally:
         dev.close()
-    print(f"next: tools/trace_report.py {args.out}   (see tools/trace.md)")
+    print(f"next: tools/venv/bin/python -I tools/trace_report.py {args.out}   (see tools/trace.md)")
 
 
 class _Shell:
