@@ -89,7 +89,7 @@ final class PlexShelf {
 
     void stop() {
         resumed = false;
-        if (backdrop != null) { backdrop.stop(); row.stop(); leaveLarge(); }
+        if (backdrop != null) { backdrop.stop(); row.stop(); }
     }
 
     /**

@@ -1250,6 +1250,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         handler.removeCallbacks(clockCheck);
         stopped = true;
         tileRefresh.onStop();
+        // Not in onPause: OK on a poster pauses Home seconds before Plex covers it, and shrinking the row then dropped
+        // the poster's focus onto the Inputs pill, glass and all, in plain view.
+        plex.leaveLarge();
     }
 
     /**
