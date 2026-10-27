@@ -18,6 +18,25 @@ public class PlexContinueTest {
         return PlexContinue.parse(new ByteArrayInputStream(("<MediaContainer><Hub>" + xml + "</Hub></MediaContainer>").getBytes(StandardCharsets.UTF_8)));
     }
 
+    /**
+     * A DOCTYPE from the server (or whoever answered discovery) must not make the TV fetch anything: every external
+     * entity resolves to nothing. The target does not exist, so a parser that tried to fetch it would throw.
+     */
+    @Test
+    public void externalEntitiesAreNeverFetched() throws Exception {
+        String missing = new java.io.File(System.getProperty("java.io.tmpdir"), "plex-xxe-" + System.nanoTime()).toURI().toString();
+        String video = "<Video key=\"/library/metadata/1\" title=\"A\" thumb=\"/t\"/>";
+        String[] bodies = {
+                "<!DOCTYPE m [<!ENTITY x SYSTEM \"" + missing + "\">]><MediaContainer><Hub>" + video + "&x;</Hub></MediaContainer>",
+                "<!DOCTYPE m [<!ENTITY % p SYSTEM \"" + missing + "\"> %p;]><MediaContainer><Hub>" + video + "</Hub></MediaContainer>",
+                "<!DOCTYPE m SYSTEM \"" + missing + "\"><MediaContainer><Hub>" + video + "</Hub></MediaContainer>",
+        };
+        for (String body : bodies) {
+            List<PlexContinue.Item> items = PlexContinue.parse(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+            assertEquals(body, 1, items.size());
+        }
+    }
+
     @Test
     public void parsesPosterArtAndMeta() throws Exception {
         List<PlexContinue.Item> items = parse(

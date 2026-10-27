@@ -13,9 +13,12 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import org.xml.sax.Attributes;
+import org.xml.sax.InputSource;
+import org.xml.sax.XMLReader;
 import org.xml.sax.helpers.DefaultHandler;
 
 import java.io.InputStream;
+import java.io.StringReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -249,7 +252,7 @@ final class PlexBackdrop {
         try {
             HttpURLConnection c = open(base + "/library/sections?X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) {
-                SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+                sax(in, new DefaultHandler() {
                     @Override
                     public void startElement(String uri, String local, String tag, Attributes a) {
                         if ("Directory".equals(tag) && a.getValue("title") != null && a.getValue("key") != null)
@@ -291,11 +294,24 @@ final class PlexBackdrop {
         return c;
     }
 
+    /**
+     * Parses a Plex response. Every external entity, DTD and parameter entity resolves to nothing: the XML comes over
+     * plain HTTP from the configured server or whoever answered discovery, and a DOCTYPE must not make the TV fetch
+     * URLs or read files. A resolver rather than disallow-doctype-decl, which Android's Expat-based parser may refuse.
+     */
+    static void sax(InputStream in, DefaultHandler handler) throws Exception {
+        XMLReader r = SAXParserFactory.newInstance().newSAXParser().getXMLReader();
+        r.setContentHandler(handler);
+        r.setErrorHandler(handler);
+        r.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
+        r.parse(new InputSource(in));
+    }
+
     /** Movies use their title; seasons and episodes use the show's name plus their own. Items without art are skipped. */
     static List<Item> parse(InputStream in) throws Exception {
         List<Item> out = new ArrayList<>();
         // SAX from the JDK rather than XmlPullParser: the same code runs in plain JVM unit tests.
-        SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+        sax(in, new DefaultHandler() {
             @Override
             public void startElement(String uri, String local, String tag, Attributes a) {
                 if (out.size() >= COUNT || (!"Video".equals(tag) && !"Directory".equals(tag))) return;

@@ -41,7 +41,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import javax.xml.parsers.SAXParserFactory;
 
 /**
  * Plex "Continue Watching" (config.xml plex_url, token in Settings.Global plex_token), styled after the Plex
@@ -280,7 +279,7 @@ final class PlexContinue {
         try {
             HttpURLConnection c = PlexBackdrop.open(base + "/hubs/promoted?contentDirectoryID=" + String.join(",", keys) + "&count=1&X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) {
-                SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+                PlexBackdrop.sax(in, new DefaultHandler() {
                     @Override public void startElement(String uri, String l, String tag, Attributes a) {
                         String id = a.getValue("hubIdentifier");
                         if ("Hub".equals(tag) && id != null && id.contains(".recentlyadded.") && a.getValue("key") != null && a.getValue("title") != null)
@@ -475,7 +474,7 @@ final class PlexContinue {
     /** Video sessions only: a Player inside a Track or Photo (music, a slideshow) is not a video to stop. */
     static List<Session> parseSessions(InputStream in) throws Exception {
         List<Session> out = new ArrayList<>();
-        SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+        PlexBackdrop.sax(in, new DefaultHandler() {
             String rk, key, time, dur;
             @Override public void startElement(String uri, String l, String tag, Attributes a) {
                 if ("Video".equals(tag)) {
@@ -669,7 +668,7 @@ final class PlexContinue {
         try {
             HttpURLConnection c = PlexBackdrop.open(base + "/identity?X-Plex-Token=" + token);
             try (InputStream in = c.getInputStream()) {
-                SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+                PlexBackdrop.sax(in, new DefaultHandler() {
                     @Override public void startElement(String uri, String local, String tag, Attributes a) {
                         if ("MediaContainer".equals(tag)) out[0] = a.getValue("machineIdentifier");
                     }
@@ -695,7 +694,7 @@ final class PlexContinue {
      */
     static List<Item> parse(InputStream in) throws Exception {
         List<Item> out = new ArrayList<>();
-        SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
+        PlexBackdrop.sax(in, new DefaultHandler() {
             String key, show, title, poster, art, meta, episode;
             int progress;
             long offset;
