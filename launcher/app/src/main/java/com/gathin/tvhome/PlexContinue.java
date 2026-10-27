@@ -78,9 +78,11 @@ final class PlexContinue {
     static final class Item {
         final String key, show, title, poster, art, meta, episode;   // episode: "S1 · E44", "" for a movie
         final int progress;   // 0..100, viewOffset / duration
-        Item(String key, String show, String title, String poster, String art, String meta, String episode, int progress) {
+        final long offsetMs;  // viewOffset: where the server says playback stopped, 0 when never started
+        Item(String key, String show, String title, String poster, String art, String meta, String episode, int progress,
+                long offsetMs) {
             this.key = key; this.show = show; this.title = title; this.poster = poster; this.art = art;
-            this.meta = meta; this.episode = episode; this.progress = progress;
+            this.meta = meta; this.episode = episode; this.progress = progress; this.offsetMs = offsetMs;
         }
         /** "/library/metadata/137585" -> "137585", as the sessions list names it. */
         String ratingKey() { return key.substring(key.lastIndexOf('/') + 1); }
@@ -449,7 +451,11 @@ final class PlexContinue {
 
     private void sendPlay(Item item) {
         String uri = "server://" + machine + "/com.plexapp.plugins.library" + item.key;
-        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("plex://watch/video?uri=" + Uri.encode(uri)));
+        String link = "plex://watch/video?uri=" + Uri.encode(uri);
+        // Plex's own Continue Watching links carry ?offset= in seconds (PlexCWFetcher, in Plex's APK); without it the
+        // player starts at 0 even for a half-watched episode.
+        if (item.offsetMs > 0) link += "&offset=" + item.offsetMs / 1000;
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(link));
         i.setPackage("com.plexapp.android");
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try { ctx.startActivity(i); } catch (ActivityNotFoundException ignored) { }
@@ -692,6 +698,7 @@ final class PlexContinue {
         SAXParserFactory.newInstance().newSAXParser().parse(in, new DefaultHandler() {
             String key, show, title, poster, art, meta, episode;
             int progress;
+            long offset;
 
             @Override public void startElement(String uri, String local, String tag, Attributes a) {
                 if (!"Video".equals(tag)) return;
@@ -714,15 +721,16 @@ final class PlexContinue {
                 if (a.getValue("contentRating") != null) parts.add(a.getValue("contentRating"));
                 meta = String.join(" · ", parts);
                 progress = 0;
+                offset = 0;
                 try {
-                    long off = Long.parseLong(a.getValue("viewOffset"));
-                    if (dur > 0) progress = (int) Math.max(0, Math.min(100, off * 100 / dur));
+                    offset = Math.max(0, Long.parseLong(a.getValue("viewOffset")));
+                    if (dur > 0) progress = (int) Math.max(0, Math.min(100, offset * 100 / dur));
                 } catch (Exception ignored) { }
             }
 
             @Override public void endElement(String uri, String local, String tag) {
                 if (!"Video".equals(tag) || key == null) return;
-                out.add(new Item(key, show, title, poster, art, meta, episode, progress));
+                out.add(new Item(key, show, title, poster, art, meta, episode, progress, offset));
                 key = null;
             }
         });

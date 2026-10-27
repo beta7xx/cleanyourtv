@@ -37,6 +37,7 @@ public class PlexContinueTest {
         assertFalse(PlexContinue.displayDate("2026-10-16").isEmpty());
         assertEquals("not-a-date", PlexContinue.displayDate("not-a-date"));
         assertEquals(74, it.progress);
+        assertEquals(2248000, it.offsetMs);   // sent to Plex as &offset=2248 (seconds), so it resumes there
         assertEquals("137830", it.ratingKey());
     }
 
