@@ -65,7 +65,9 @@ D-pad navigation, nothing TV-specific in code.
 - **Configuration layering.** `res/values/config.xml` holds every per-TV choice (dock apps, columns,
   Live TV package, key services, Plex URL). `Config.load()` overlays `config.json` from the app's
   external files dir (pushed by `tools/theme.sh`, see `themes/README.md` for the keys); unknown or
-  mistyped keys are ignored so a theme can never break Home. On-TV choices from Launcher settings sit
+  mistyped keys are ignored so a theme can never break Home. On Android 8-10, where other apps can write `Android/data`, `config.json` is
+  taken only when its SHA-256 matches `Settings.Global cyt_theme_sha256` (set by `theme.sh`/`theme.ps1`, which only
+  the adb shell can write); otherwise the last matching private copy stays (`Config.ownerWritten`). On-TV choices from Launcher settings sit
   above both until "Follow theme". `ThemeProvider` is a ContentProvider that lets the adb shell write
   theme files on firmware that locks Android/data.
 - **MainActivity** (large, ~3500 lines) owns the home screen: one RecyclerView `grid` whose first
@@ -98,8 +100,11 @@ D-pad navigation, nothing TV-specific in code.
   left edge is pinned 11dp inside the clock's column (MainActivity's `plexEdge`), not to the band, so the column
   count does not move it. Server URL and token
   are on the TV, never in the repo: config.xml `plex_url`, else `Settings.Global plex_url`, else the first server
-  that answers Plex's LAN discovery (`PlexGdm`, retried on each resume until one answers, then `PlexShelf.build`
-  builds both views late); the token is `Settings.Global plex_token`, and without it nothing is fetched. The device needs
+  that answers Plex's LAN discovery (`PlexGdm`, retried on each resume and network change until one answers, then
+  `PlexShelf.build` builds both views late). The first discovered address is pinned in the launcher's private prefs
+  (`plex`/`server`), and later discoveries accept only that address, so another LAN host cannot collect the token;
+  when the server's address changes, set `plex_url` or `pm clear` the launcher. All Plex XML goes through
+  `PlexBackdrop.sax`, which resolves every external entity to nothing (no XXE); the token is `Settings.Global plex_token`, and without it nothing is fetched. The device needs
   Plex's Picture-in-Picture app-op denied so Home pauses playback (noted in the KD-49X8500F example).
 - **Focus (this fork).** One floating `GlassView` marks every focus on Home. Tiles place it from
   `onTileFocused`; any other focusable view opts in with `MainActivity.glassTarget(view, scale, radiusPx)`
