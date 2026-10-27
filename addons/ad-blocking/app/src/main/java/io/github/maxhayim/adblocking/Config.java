@@ -57,7 +57,7 @@ final class Config {
 
     /** Takes a pushed config.json ({"kind": "pihole"|"adguard", "url", "user", "password"}), and deletes it. */
     static boolean importPushed(Context c) {
-        File dir = c.getExternalFilesDir(null);
+        File dir = c.getFilesDir();   // only ConfigProvider (ADB shell) writes here; see ConfigProvider
         File f = dir == null ? null : new File(dir, PUSHED);
         if (f == null || !f.isFile()) return false;
         try {

@@ -47,7 +47,7 @@ final class Config {
 
     /** Takes a pushed config.json ({"url": ..., "token": ...}) if there is one, and deletes it. True when taken. */
     static boolean importPushed(Context c) {
-        File dir = c.getExternalFilesDir(null);
+        File dir = c.getFilesDir();   // only ConfigProvider (ADB shell) writes here; see ConfigProvider
         File f = dir == null ? null : new File(dir, PUSHED);
         if (f == null || !f.isFile()) return false;
         try {

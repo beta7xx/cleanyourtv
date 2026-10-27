@@ -20,7 +20,9 @@ public class ConfigProvider extends ContentProvider {
     @Override
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         if (!mode.contains("w") || !Config.PUSHED.equals(uri.getLastPathSegment())) throw new FileNotFoundException(uri.toString());
-        File dir = getContext().getExternalFilesDir(null);
+        // App-private storage: on Android 8-10 any app with storage permission can write Android/data, which
+        // would let it plant a config (a new server URL) that the import below takes as the owner's.
+        File dir = getContext().getFilesDir();
         if (dir == null || (!dir.isDirectory() && !dir.mkdirs())) throw new FileNotFoundException("no files folder");
         try {
             return ParcelFileDescriptor.open(new File(dir, Config.PUSHED),
