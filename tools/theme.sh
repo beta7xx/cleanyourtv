@@ -55,7 +55,7 @@ del() { echo "rm -f $DIR/$1 2>/dev/null; content delete --uri $URI/$1 2>/dev/nul
 CLEAR_WALLPAPERS="mkdir -p $DIR/wallpapers 2>/dev/null; rm -f $DIR/wallpapers/*.[jJ][pP][gG] $DIR/wallpapers/*.[jJ][pP][eE][gG] $DIR/wallpapers/*.[pP][nN][gG] $DIR/wallpapers/*.[wW][eE][bB][pP] 2>/dev/null; content delete --uri $URI/wallpapers 2>/dev/null"
 
 if [ "${1:-}" = --reset ]; then
-  tv "mkdir -p $DIR 2>/dev/null; $(del config.json); $(del wallpaper.jpg); $(del wallpapers/captions.txt); $CLEAR_WALLPAPERS; printf '%s' '$REVISION' > $TMP-theme_revision; $(put theme_revision)" >/dev/null
+  tv "mkdir -p $DIR 2>/dev/null; settings delete global cyt_theme_sha256 >/dev/null 2>&1; $(del config.json); $(del wallpaper.jpg); $(del wallpapers/captions.txt); $CLEAR_WALLPAPERS; printf '%s' '$REVISION' > $TMP-theme_revision; $(put theme_revision)" >/dev/null
   "$PY" -I theme_restart.py
   echo reset
   exit 0
@@ -102,6 +102,11 @@ if [ -d "$THEME/wallpapers" ]; then
 fi
 
 tv "mkdir -p $DIR" >/dev/null 2>&1 || true
+# On Android 8-10 any app with storage permission can write Android/data, so the launcher takes config.json only
+# when its SHA-256 matches the one recorded here, in a setting only the adb shell can write (Config.THEME_HASH).
+# Recorded before the file, so the launcher never sees the new file with the old hash.
+SHA="$("$PY" -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$THEME/config.json")"
+tv "settings put global cyt_theme_sha256 $SHA" >/dev/null
 tv --push "$THEME/config.json" "$TMP-config.json" >/dev/null
 tv "$(put config.json)"
 if [ -f "$THEME/wallpaper.jpg" ]; then

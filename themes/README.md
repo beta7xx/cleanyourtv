@@ -12,6 +12,11 @@ TV_HOST=192.168.1.50 tools/theme.sh --reset                # back to the built-i
 powershell -ExecutionPolicy Bypass -File tools\theme.ps1 -TvHost 192.168.1.50 themes\aurora
 ```
 
+On Android 8 to 10, any app with storage permission can write the launcher's `Android/data` folder, so there the
+launcher takes `config.json` only when its SHA-256 matches `settings get global cyt_theme_sha256`, which only the adb
+shell can set. `theme.sh` and `theme.ps1` set it. A `config.json` copied by hand on those versions also needs
+`settings put global cyt_theme_sha256 <sha256 of the file>`, or the launcher keeps the last theme that matched.
+
 `tools/venv/bin/python -I tools/manage.py list themes` and `list switches` list them from this file, `show <name>` gives one with its
 screenshot, and `manage.py set <switch> <value> --theme <your folder>` writes a key into a theme folder of your own
 and pushes it with `theme.sh`. The folder has to be outside this checkout: one under `themes/` or `examples/` is

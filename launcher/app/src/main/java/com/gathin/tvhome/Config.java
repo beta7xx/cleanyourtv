@@ -4,7 +4,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Environment;
+import android.provider.Settings;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -17,6 +19,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -744,10 +747,22 @@ final class Config {
      * start before the card is mounted (seen at every boot on a Xiaomi MiTV-MTEQ0), and without the copy it comes
      * up with the built-in dock order. A missing file on mounted storage still means no overlay.
      */
+    /** Settings.Global key holding the SHA-256 (hex) of the config.json theme.sh last pushed. */
+    static final String THEME_HASH = "cyt_theme_sha256";
+
     private static JSONObject readOverlay(Context ctx, File file, boolean mounted) {
         File copy = new File(ctx.getFilesDir(), FILE_NAME);
         if (!mounted) return read(copy);
-        JSONObject json = read(file);
+        byte[] bytes = bytes(file);
+        // Android 8-10: any app holding storage permission can write Android/data, and config.json picks the apps
+        // remote keys open (app_keys). Take the file only if theme.sh recorded its hash in Settings.Global, which
+        // only the adb shell (WRITE_SECURE_SETTINGS) can write; otherwise keep the last copy that passed.
+        if (bytes != null && Build.VERSION.SDK_INT < 30
+                && !ownerWritten(bytes, Settings.Global.getString(ctx.getContentResolver(), THEME_HASH))) {
+            Log.w(TAG, "ignoring " + file + ": not the config.json theme.sh pushed (" + THEME_HASH + ")");
+            return read(copy);
+        }
+        JSONObject json = parse(file, bytes);
         if (json == null) {
             copy.delete();
         } else {
@@ -760,7 +775,24 @@ final class Config {
         return json;
     }
 
+    /** True when bytes hash (SHA-256, hex, any case) to expected; no expected hash is never a match. */
+    static boolean ownerWritten(byte[] bytes, String expected) {
+        if (expected == null) return false;
+        try {
+            StringBuilder hex = new StringBuilder();
+            for (byte b : MessageDigest.getInstance("SHA-256").digest(bytes)) hex.append(String.format("%02x", b));
+            return hex.toString().equalsIgnoreCase(expected.trim());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private static JSONObject read(File file) {
+        return parse(file, bytes(file));
+    }
+
+    /** The file's bytes, or null when it is missing, over 64 KB or unreadable. */
+    private static byte[] bytes(File file) {
         if (file == null || !file.isFile()) return null;
         if (file.length() > 64 * 1024) {
             Log.w(TAG, "ignoring " + file + ": larger than 64 KB");
@@ -770,7 +802,17 @@ final class Config {
             byte[] buf = new byte[(int) file.length()];
             int n = 0, r;
             while (n < buf.length && (r = in.read(buf, n, buf.length - n)) > 0) n += r;
-            String text = new String(buf, 0, n, StandardCharsets.UTF_8);
+            return n == buf.length ? buf : Arrays.copyOf(buf, n);
+        } catch (IOException e) {
+            Log.w(TAG, "ignoring " + file + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static JSONObject parse(File file, byte[] bytes) {
+        if (bytes == null) return null;
+        try {
+            String text = new String(bytes, StandardCharsets.UTF_8);
             if (text.startsWith("\uFEFF")) text = text.substring(1);   // Windows editors add a BOM
             return new JSONObject(text);
         } catch (Exception e) {
