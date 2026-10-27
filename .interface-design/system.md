@@ -80,5 +80,5 @@ Three visible tiers; weight and opacity do the rest.
 
 ## Budget
 
-Release APK gate on this fork: 500 KB (`.github/workflows/ci.yml`, 512,000 bytes); upstream gates at 480.
+Release APK gate: upstream's 576 KB (589,824 bytes), checked by hand on this fork, which has no workflows.
 Current release: about 499 KB.

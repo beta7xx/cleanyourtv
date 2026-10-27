@@ -18,11 +18,11 @@ Launcher (needs JDK 17, Android SDK platform 34, build-tools 34.0.0; run from `l
 ./gradlew testDebugUnitTest --offline -q                 # all JVM unit tests (plain JUnit 4, no device)
 ./gradlew testDebugUnitTest --offline -q --tests '*PlexContinueTest*'   # one test class
 ./gradlew assembleDebug --offline -q                     # debug APK
-./gradlew testReleaseUnitTest lintRelease assembleRelease  # what CI runs
+./gradlew testReleaseUnitTest lintRelease assembleRelease  # what upstream's CI runs (this fork has no workflows)
 ```
 
-Release is R8-minified and signed with the debug key, so it installs over a debug build. CI fails a
-release APK over the size gate in `.github/workflows/ci.yml` (576 KB, upstream's; this fork's release, Plex row included,
+Release is R8-minified and signed with the debug key, so it installs over a debug build. Upstream's CI fails a
+release APK over 576 KB. This fork removed `.github/workflows/`, so nothing checks it here: check by hand (this fork's release, Plex row included,
 is about 552 KB, 565,541 B, after the October 2026 merge); the launcher targets 1 GB TVs and sits near the gate, so check the size after any addition:
 `stat -c %s app/build/outputs/apk/release/app-release.apk`.
 
@@ -31,7 +31,7 @@ Repo lists, tools and docs (from the repo root, Python 3.12, `tools/requirements
 ```bash
 python3 -m unittest discover -s tests -v                 # examples/ tables, tool scripts, docs consistency
 python3 -m unittest tests.test_examples -v               # one module
-CLEANYOURTV_STRICT=1 python3 -m unittest discover -s tests  # also checks README counts (CI does this on push to main)
+CLEANYOURTV_STRICT=1 python3 -m unittest discover -s tests  # also checks README counts (upstream's CI does this on push to main)
 ```
 
 On the TV (set `TV_HOST=<ip>`; `tools/tv.py` is an adb-shell client in Python, no adb binary needed):
@@ -135,7 +135,9 @@ git checkout sony-kd-49x8500f && git merge main                                 
 
 Expect conflicts in `MainActivity.java`, `config.xml` and the two `strings.xml` files, where the Plex row
 lives; keep both sides and keep this fork's `reorder_button`/`ambient_glow` values. GitHub's web merge
-cannot resolve these, so merge locally and push `sony-kd-49x8500f`. The branch's history was rewritten once to
+cannot resolve these, so merge locally and push `sony-kd-49x8500f`. This fork deleted `.github/workflows/`: when upstream changes a
+workflow the merge stops on a modify/delete conflict; keep it deleted (`git rm`). Three upstream tests read those
+files (`test_addon_recipe_checklist`, `test_contributing_build_from_source`, `test_translation_recipe_gate`) and fail here. The branch's history was rewritten once to
 remove a LAN address from `config.xml`; any future rewrite must exclude upstream's commits
 (`git filter-branch ... -- sony-kd-49x8500f ^<first fork commit>^ ^upstream/main`), or their hashes change and
 every later merge from upstream conflicts. In a filter-branch filter, `exit` ends filter-branch itself. The fork's design and plan documents are in
