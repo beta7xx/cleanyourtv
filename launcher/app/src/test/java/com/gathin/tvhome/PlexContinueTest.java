@@ -37,6 +37,31 @@ public class PlexContinueTest {
         }
     }
 
+    /** Plex left the Series hub out of /hubs/promoted (its new episodes were all On Deck): the tab still comes. */
+    @Test
+    public void everyConfiguredLibraryGetsATabEvenWithoutItsHub() {
+        List<PlexContinue.Tab> hubs = Arrays.asList(
+                new PlexContinue.Tab("Recently Added in Anime", "/hubs/home/recentlyAdded?type=2&sectionID=24"),
+                new PlexContinue.Tab("Recently Added in Movies", "/library/sections/29/all?sort=addedAt:desc"));
+        List<PlexContinue.Tab> tabs = PlexContinue.libraryTabs(hubs, Arrays.asList("24", "16", "29"),
+                Arrays.asList("Anime", "Series", "Movies"), "Recently added in %1$s");
+        assertEquals(3, tabs.size());
+        assertEquals("Recently added in Anime", tabs.get(0).title);
+        assertEquals("/hubs/home/recentlyAdded?type=2&sectionID=24", tabs.get(0).key);
+        assertEquals("Recently added in Series", tabs.get(1).title);
+        assertEquals("/library/sections/16/recentlyAdded", tabs.get(1).key);
+        assertEquals("/library/sections/29/all?sort=addedAt:desc", tabs.get(2).key);
+    }
+
+    @Test
+    public void aSectionKeyMatchesOnlyItsOwnLibrary() {
+        assertTrue(PlexContinue.inSection("/hubs/home/recentlyAdded?type=2&sectionID=16", "16"));
+        assertFalse(PlexContinue.inSection("/hubs/home/recentlyAdded?type=2&sectionID=16", "1"));
+        assertTrue(PlexContinue.inSection("/hubs/home/recentlyAdded?sectionID=1&type=2", "1"));
+        assertTrue(PlexContinue.inSection("/library/sections/29/all?sort=addedAt:desc", "29"));
+        assertFalse(PlexContinue.inSection("/library/sections/29/all?sort=addedAt:desc", "2"));
+    }
+
     @Test
     public void parsesPosterArtAndMeta() throws Exception {
         List<PlexContinue.Item> items = parse(

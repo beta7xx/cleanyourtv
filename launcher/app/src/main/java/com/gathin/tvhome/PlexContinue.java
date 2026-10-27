@@ -288,18 +288,32 @@ final class PlexContinue {
                 });
             } finally { c.disconnect(); }
         } catch (Exception e) { return; }
-        if (fresh.size() < 2) return;
-        // In the order plex_sections names the libraries, titled "Recently added in <library>" in the TV's language.
-        // A hub key names its library as sectionID=<key> (TV) or /library/sections/<key>/ (movies).
         List<Tab> ordered = new ArrayList<>();
         ordered.add(fresh.get(0));
-        for (int i = 0; i < keys.size(); i++) {
-            for (Tab t : fresh) {
-                if (!t.key.contains("sectionID=" + keys.get(i)) && !t.key.contains("/sections/" + keys.get(i) + "/")) continue;
-                ordered.add(new Tab(ctx.getString(R.string.plex_recent_in, sectionTitles.get(i)), t.key));
-            }
-        }
+        ordered.addAll(libraryTabs(fresh.subList(1, fresh.size()), keys, sectionTitles, ctx.getString(R.string.plex_recent_in)));
         main.post(() -> { tabs = ordered; buildTabs(); });
+    }
+
+    /**
+     * One tab per configured library, in plex_sections order, titled "Recently added in <library>" in the TV's
+     * language. The key is Plex's own Recently Added hub where /hubs/promoted lists one, else the library's own
+     * recentlyAdded list: Plex leaves a library's hub out when every new item is already in On Deck (a series whose
+     * new episodes all belong to the show in progress), and the tab used to vanish with it.
+     */
+    static List<Tab> libraryTabs(List<Tab> hubs, List<String> keys, List<String> titles, String titleFormat) {
+        List<Tab> out = new ArrayList<>();
+        for (int i = 0; i < keys.size(); i++) {
+            String key = "/library/sections/" + keys.get(i) + "/recentlyAdded";
+            for (Tab t : hubs) if (inSection(t.key, keys.get(i))) { key = t.key; break; }
+            out.add(new Tab(String.format(titleFormat, titles.get(i)), key));
+        }
+        return out;
+    }
+
+    /** A hub key names its library as sectionID=<key> (TV) or /library/sections/<key>/ (movies); 1 is not 16. */
+    static boolean inSection(String hubKey, String section) {
+        return hubKey.matches(".*[?&]sectionID=" + java.util.regex.Pattern.quote(section) + "(&.*)?")
+                || hubKey.contains("/sections/" + section + "/");
     }
 
     /** The configured library names that matched, alongside sectionKeys(). */
